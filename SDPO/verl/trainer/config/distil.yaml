@@ -1,0 +1,32 @@
+defaults:
+  - ppo_trainer
+  - user
+  - _self_
+
+# DistIL: Distributional DAgger for Self-Distillation
+# Uses forward cross-entropy + future credit assignment (Proposition 1)
+# Inherits all settings from sdpo.yaml but sets loss_mode=distil
+
+actor_rollout_ref:
+  actor:
+    policy_loss:
+      loss_mode: distil
+    self_distillation:
+      full_logit_distillation: True
+      distillation_topk: 20
+      distillation_add_tail: True
+      alpha: 1.0
+      success_reward_threshold: 0.5
+      teacher_regularization: ema
+      teacher_update_rate: 0.01
+      max_reprompt_len: 10240
+      reprompt_truncation: right
+      dont_reprompt_on_self_success: True
+      remove_thinking_from_demonstration: True
+      include_environment_feedback: True
+      environment_feedback_only_without_solution: True
+      is_clip: 2.0
+      use_reference_solution: False
+
+trainer:
+  val_before_train: False
