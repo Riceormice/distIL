@@ -1,5 +1,7 @@
 import os
 import json as _json
+from pathlib import Path
+
 import torch as _torch
 _orig_default = _json.JSONEncoder.default
 def _patched_default(self, obj):
@@ -94,7 +96,10 @@ class CustomScriptArguments(ScriptArguments):
     )
     loss_mode: str = field(
         default="jsd",
-        metadata={"help": "Loss mode: 'distil' (DistIL), 'jsd' (original OPSD), 'sdpo' (reverse KL, beta=1)."},
+        metadata={
+            "help": "Loss mode: 'distil', 'jsd' (OPSD), 'sdpo' (reverse KL), or "
+            "'sr_opsd' (EMA/reference forward Renyi)."
+        },
     )
     ema_decay: float = field(
         default=0.999,
@@ -102,6 +107,21 @@ class CustomScriptArguments(ScriptArguments):
             "help": "EMA decay factor. Higher values make the teacher change more slowly. "
             "Typical range: 0.99–0.9999. Only used when use_ema_teacher=True."
         },
+    )
+    renyi_rho: float = field(
+        default=0.95,
+        metadata={"help": "Renyi order for loss_mode=sr_opsd; must be positive and different from 1."},
+    )
+    reference_teacher_weight: float = field(
+        default=0.9,
+        metadata={
+            "help": "Weight of the EMA privileged teacher in the normalized geometric target. "
+            "Use 1.0 for the no-reference ablation."
+        },
+    )
+    renyi_token_clip: float = field(
+        default=0.0,
+        metadata={"help": "Optional per-token SR-OPSD divergence clip. Zero disables clipping."},
     )
     student_thinking: bool = field(
         default=False,
@@ -126,6 +146,14 @@ if __name__ == "__main__":
     # sdpo mode uses reverse KL (beta=1)
     if script_args.loss_mode == "sdpo":
         training_args.beta = 1.0
+
+    if script_args.loss_mode == "sr_opsd":
+        if not model_args.use_peft:
+            raise ValueError("loss_mode=sr_opsd requires --use_peft")
+        if not script_args.use_ema_teacher:
+            raise ValueError("loss_mode=sr_opsd requires --use_ema_teacher")
+        if script_args.fixed_teacher:
+            raise ValueError("loss_mode=sr_opsd cannot be combined with --fixed_teacher")
 
     ################
     # WandB Run Name & Output Directory
@@ -210,6 +238,10 @@ if __name__ == "__main__":
                 "top_k_loss": script_args.top_k_loss if script_args.top_k_loss > 0 else None,
                 "use_ema_teacher": script_args.use_ema_teacher,
                 "ema_decay": script_args.ema_decay if script_args.use_ema_teacher else None,
+                "renyi_rho": script_args.renyi_rho if script_args.loss_mode == "sr_opsd" else None,
+                "reference_teacher_weight": (
+                    script_args.reference_teacher_weight if script_args.loss_mode == "sr_opsd" else None
+                ),
             },
         )
 
@@ -278,8 +310,13 @@ if __name__ == "__main__":
     # Add presence_penalty to training_args so it can be accessed in the trainer
     training_args.presence_penalty = script_args.presence_penalty
 
-    dataset = load_dataset("siyanzhao/Openthoughts_math_30k_opsd")
-    train_dataset = dataset["train"]
+    dataset_name = script_args.dataset_name or "siyanzhao/Openthoughts_math_30k_opsd"
+    dataset_path = Path(dataset_name).expanduser()
+    if dataset_path.is_file() and dataset_path.suffix in {".json", ".jsonl"}:
+        train_dataset = load_dataset("json", data_files=str(dataset_path), split="train")
+    else:
+        dataset = load_dataset(dataset_name)
+        train_dataset = dataset["train"] if hasattr(dataset, "keys") else dataset
 
     trainer = OPSDTrainer(
         model=model_args.model_name_or_path,
@@ -296,6 +333,9 @@ if __name__ == "__main__":
         use_ema_teacher=script_args.use_ema_teacher,
         loss_mode=script_args.loss_mode,
         ema_decay=script_args.ema_decay,
+        renyi_rho=script_args.renyi_rho,
+        reference_teacher_weight=script_args.reference_teacher_weight,
+        renyi_token_clip=script_args.renyi_token_clip if script_args.renyi_token_clip > 0 else None,
         student_thinking=script_args.student_thinking,
         teacher_thinking=script_args.teacher_thinking,
     )

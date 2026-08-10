@@ -95,6 +95,21 @@ self_distillation:
   # KL interpolation coefficient: 0.0=forward KL, 1.0=reverse KL, in-between=JSD
   alpha: 0.5 
 
+  # Explicit divergence override. "auto" preserves alpha behavior.
+  divergence: auto
+
+  # Renyi order for divergence=renyi_forward
+  rho: 0.95
+
+  # Mix an independent frozen reference into the privileged teacher target
+  reference_policy: False
+
+  # EMA-teacher weight in the normalized geometric target
+  reference_teacher_weight: 0.9
+
+  # Reference synchronization is disabled; SR-OPSD uses the frozen initial policy
+  reference_sync_steps: 0
+
   # Minimum sequence reward to be considered successful
   success_reward_threshold: 0.5
 

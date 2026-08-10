@@ -566,6 +566,8 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
 
         # TODO: add more optimizer args into config
         if role == "actor" and optim_config is not None:
+            from transformers import get_linear_schedule_with_warmup
+
             from verl.utils.torch_functional import get_constant_schedule_with_warmup, get_cosine_schedule_with_warmup
 
             actor_optimizer = build_optimizer(actor_module_fsdp.parameters(), optim_config)
@@ -585,6 +587,12 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
             if lr_scheduler_type == "constant":
                 actor_lr_scheduler = get_constant_schedule_with_warmup(
                     optimizer=actor_optimizer, num_warmup_steps=num_warmup_steps
+                )
+            elif lr_scheduler_type == "linear":
+                actor_lr_scheduler = get_linear_schedule_with_warmup(
+                    optimizer=actor_optimizer,
+                    num_warmup_steps=num_warmup_steps,
+                    num_training_steps=total_steps,
                 )
             elif lr_scheduler_type == "cosine":
                 actor_lr_scheduler = get_cosine_schedule_with_warmup(
@@ -901,6 +909,25 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                             student_module=self.actor_module_fsdp,
                             mix_coef=self_distillation_cfg.get("teacher_update_rate", 0.0),
                         )
+                    elif self_distillation_cfg.get("reference_policy", False):
+                        # SR-OPSD needs two independent non-optimized policies:
+                        # an EMA self-teacher and the permanently frozen initial reference.
+                        self.teacher_module_fsdp = self._build_model_optimizer(
+                            model_path=local_path,
+                            fsdp_config=omega_conf_to_dataclass(self.config.ref.fsdp_config),
+                            optim_config=None,
+                            override_model_config=override_model_config,
+                            use_remove_padding=use_remove_padding,
+                            use_fused_kernels=use_fused_kernels,
+                            trust_remote_code=self.config.model.get("trust_remote_code", False),
+                            use_liger=self.config.model.get("use_liger", False),
+                            role="ref",
+                            use_prefix_grouper=use_prefix_grouper,
+                            use_tiled_mlp=ref_use_tiled_mlp,
+                            tiled_mlp_shards=ref_tiled_mlp_shards,
+                        )[0]
+                        self.actor.teacher_module = self.teacher_module_fsdp
+                        self.actor.reference_module = self.ref_module_fsdp
                     else:
                         self.actor.teacher_module = self.ref_module_fsdp
 
@@ -913,6 +940,17 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                 processing_class=self.processor if self.processor is not None else self.tokenizer,
                 checkpoint_config=self.config.actor.checkpoint,
             )
+            if hasattr(self, "teacher_module_fsdp"):
+                teacher_checkpoint_config = OmegaConf.create(
+                    {"load_contents": ["model"], "save_contents": ["model"]}
+                )
+                self.teacher_checkpoint_manager = FSDPCheckpointManager(
+                    model=self.teacher_module_fsdp,
+                    optimizer=None,
+                    lr_scheduler=None,
+                    processing_class=self.processor if self.processor is not None else self.tokenizer,
+                    checkpoint_config=teacher_checkpoint_config,
+                )
 
         if not self._is_actor and self._is_rollout:
             # If ActorRolloutRefWorker is initialized as a standalone rollout,
@@ -1122,6 +1160,13 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         self.checkpoint_manager.save_checkpoint(
             local_path=local_path, hdfs_path=hdfs_path, global_step=global_step, max_ckpt_to_keep=max_ckpt_to_keep
         )
+        if hasattr(self, "teacher_checkpoint_manager"):
+            self.teacher_checkpoint_manager.save_checkpoint(
+                local_path=os.path.join(local_path, "ema_teacher"),
+                hdfs_path=None,
+                global_step=global_step,
+                max_ckpt_to_keep=None,
+            )
         dist.barrier()
 
         if self._is_lora and hasattr(getattr(self, "actor_module", self.actor_module_fsdp), "peft_config"):
@@ -1179,6 +1224,17 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         self.checkpoint_manager.load_checkpoint(
             local_path=local_path, hdfs_path=hdfs_path, del_local_after_load=del_local_after_load
         )
+        if hasattr(self, "teacher_checkpoint_manager"):
+            teacher_path = os.path.join(local_path, "ema_teacher")
+            if not os.path.isdir(teacher_path):
+                raise FileNotFoundError(
+                    f"SR-OPSD resume requires the EMA teacher checkpoint at {teacher_path}"
+                )
+            self.teacher_checkpoint_manager.load_checkpoint(
+                local_path=teacher_path,
+                hdfs_path=None,
+                del_local_after_load=del_local_after_load,
+            )
 
         if self._is_offload_param:
             offload_fsdp_model_to_cpu(self.actor_module_fsdp)

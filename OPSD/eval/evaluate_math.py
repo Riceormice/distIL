@@ -569,6 +569,12 @@ def main():
         help="Dataset to use for evaluation (default: math500)",
     )
     parser.add_argument(
+        "--datasets",
+        nargs="+",
+        choices=["math500", "amo-bench", "aime24", "aime25", "hmmt25", "minerva", "amc23"],
+        help="Evaluate several datasets with one model load; overrides --dataset.",
+    )
+    parser.add_argument(
         "--max_new_tokens",
         type=int,
         default=38912,
@@ -611,6 +617,12 @@ def main():
         "--num_samples", type=int, default=None, help="Number of samples to evaluate (None = all)"
     )
     parser.add_argument("--output_file", type=str, default=None, help="Path to save detailed results JSON")
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default=None,
+        help="Directory for per-dataset JSON files when --datasets is used.",
+    )
     parser.add_argument(
         "--gpu_memory_utilization",
         type=float,
@@ -664,25 +676,22 @@ def main():
         print("performance degradation and endless repetitions.")
         print("!" * 70 + "\n")
 
-    # Auto-generate output file if not specified
-    if args.output_file is None:
-        parts = ["eval_results", args.dataset, Path(args.base_model).name]
-        if args.checkpoint_dir:
-            checkpoint_path = Path(args.checkpoint_dir)
-            parts += [checkpoint_path.parent.name, checkpoint_path.name]
-        parts += [
-            "thinking" if args.enable_thinking else "nonthinking",
-            f"temp{args.temperature}",
-            f"valn{args.val_n}",
-        ]
-        args.output_file = str(Path("eval_results") / ("_".join(parts) + ".json"))
+    selected_datasets = args.datasets or [args.dataset]
+    if len(selected_datasets) > 1 and args.output_file is not None:
+        parser.error("--output_file is only valid for a single dataset; use --output_dir")
+    output_dir = Path(args.output_dir or "eval_results")
 
-    print(f"Results will be saved to: {args.output_file}")
+    def output_path_for(dataset_name: str) -> str:
+        if args.output_file is not None:
+            return args.output_file
+        return str(output_dir / f"{dataset_name}.json")
+
+    print(f"Results will be saved under: {output_dir}")
 
     print("\n" + "=" * 70)
     print("QWEN3 MATH EVALUATION WITH THINKING MODE")
     print("=" * 70)
-    print(f"Dataset: {args.dataset.upper()}")
+    print(f"Datasets: {', '.join(name.upper() for name in selected_datasets)}")
     print(f"Base model: {args.base_model}")
     print(f"Checkpoint: {args.checkpoint_dir or 'None (base model only)'}")
     print(f"Thinking Mode: {'ENABLED ✓' if args.enable_thinking else 'DISABLED'}")
@@ -696,7 +705,7 @@ def main():
     print(f"Presence penalty: {args.presence_penalty}")
     print(f"Num samples: {args.num_samples or 'All'}")
     print(f"Val-N (solutions per problem): {args.val_n}")
-    print(f"Output file: {args.output_file}")
+    print(f"Output directory: {output_dir}")
     print(f"GPU memory utilization: {args.gpu_memory_utilization}")
     print(f"Tensor parallel size: {args.tensor_parallel_size}")
     print("=" * 70 + "\n")
@@ -734,30 +743,33 @@ def main():
             print(f"Warning: Could not create LoRA request: {e}")
             print("Continuing without LoRA.")
 
-    # Run evaluation
-    average_at_n_pct, results = evaluate_math500(
-        llm,
-        tokenizer,
-        max_new_tokens=args.max_new_tokens,
-        temperature=args.temperature,
-        top_p=args.top_p,
-        top_k=args.top_k,
-        min_p=args.min_p,
-        presence_penalty=args.presence_penalty,
-        num_samples=args.num_samples,
-        output_file=args.output_file,
-        lora_request=lora_request,
-        dataset_name=args.dataset,
-        base_model_name=args.base_model,
-        enable_thinking=args.enable_thinking,
-        val_n=args.val_n,
-    )
+    averages = {}
+    for dataset_name in selected_datasets:
+        average_at_n_pct, _ = evaluate_math500(
+            llm,
+            tokenizer,
+            max_new_tokens=args.max_new_tokens,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            top_k=args.top_k,
+            min_p=args.min_p,
+            presence_penalty=args.presence_penalty,
+            num_samples=args.num_samples,
+            output_file=output_path_for(dataset_name),
+            lora_request=lora_request,
+            dataset_name=dataset_name,
+            base_model_name=args.base_model,
+            enable_thinking=args.enable_thinking,
+            val_n=args.val_n,
+        )
+        averages[dataset_name] = average_at_n_pct
 
     print("\n" + "=" * 70)
     print("EVALUATION COMPLETE!")
     print("=" * 70)
-    print(f"Final Average@{args.val_n}: {average_at_n_pct:.2f}%")
-    print(f"Results saved to: {args.output_file}")
+    for dataset_name, average in averages.items():
+        print(f"{dataset_name}: Average@{args.val_n}={average:.2f}%")
+    print(f"Results saved under: {output_dir}")
     print("=" * 70 + "\n")
 
 

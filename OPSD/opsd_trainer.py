@@ -62,6 +62,7 @@ from trl.trainer.utils import (
 )
 from trl.experimental.gold.gold_config import GOLDConfig
 from data_collator import SelfDistillationDataCollator
+from sr_opsd_loss import sr_opsd_loss_from_logits, validate_renyi_order
 
 
 if is_peft_available():
@@ -143,6 +144,9 @@ class OPSDTrainer(SFTTrainer):
         jsd_token_clip: float | None = None,
         use_ema_teacher: bool = False,
         ema_decay: float = 0.999,
+        renyi_rho: float = 0.95,
+        reference_teacher_weight: float = 0.9,
+        renyi_token_clip: float | None = None,
         student_thinking: bool = False,
         teacher_thinking: bool = True,
     ):
@@ -195,7 +199,14 @@ class OPSDTrainer(SFTTrainer):
         self.jsd_token_clip = jsd_token_clip
         self.use_ema_teacher = use_ema_teacher
         self.ema_decay = ema_decay
+        self.renyi_rho = renyi_rho
+        self.reference_teacher_weight = reference_teacher_weight
+        self.renyi_token_clip = renyi_token_clip
         self._ema_params = None  # lazily initialized on first optimizer step
+
+        valid_loss_modes = {"distil", "jsd", "sdpo", "sr_opsd"}
+        if self.loss_mode not in valid_loss_modes:
+            raise ValueError(f"loss_mode must be one of {sorted(valid_loss_modes)}; got {self.loss_mode}")
 
         # Validate fixed_teacher option
         if self.fixed_teacher and peft_config is None:
@@ -208,6 +219,19 @@ class OPSDTrainer(SFTTrainer):
             raise ValueError(
                 "use_ema_teacher=True and fixed_teacher=True are mutually exclusive teacher strategies."
             )
+
+        if self.loss_mode == "sr_opsd":
+            if peft_config is None:
+                raise ValueError("loss_mode=sr_opsd requires PEFT so the frozen base reference is available")
+            if not self.use_ema_teacher:
+                raise ValueError("loss_mode=sr_opsd requires use_ema_teacher=True")
+            if self.use_thinking_machines_loss:
+                raise ValueError("loss_mode=sr_opsd requires the full-distribution loss")
+            validate_renyi_order(self.renyi_rho)
+            if not 0.0 <= self.reference_teacher_weight <= 1.0:
+                raise ValueError("reference_teacher_weight must be in [0, 1]")
+            if self.renyi_token_clip is not None and self.renyi_token_clip <= 0.0:
+                raise ValueError("renyi_token_clip must be positive when set")
 
         if self.use_ema_teacher:
             self.add_callback(EMAUpdateCallback(self))
@@ -223,6 +247,14 @@ class OPSDTrainer(SFTTrainer):
             print("FIXED TEACHER MODE ENABLED")
             print("Teacher will use the initial policy (base model without LoRA adapters)")
             print("Student will update with LoRA adapters")
+            print(f"{'='*80}\n")
+
+        if self.loss_mode == "sr_opsd":
+            print(f"\n{'='*80}")
+            print("SR-OPSD MODE ENABLED")
+            print(f"Forward Renyi order (rho): {self.renyi_rho}")
+            print(f"EMA privileged-teacher weight: {self.reference_teacher_weight}")
+            print(f"Frozen privileged-reference weight: {1.0 - self.reference_teacher_weight}")
             print(f"{'='*80}\n")
 
         if self.reason_first:
@@ -644,8 +676,8 @@ class OPSDTrainer(SFTTrainer):
 
         Swaps `param.data` of every tracked (trainable) parameter with its EMA counterpart,
         runs the body (teacher forward), then restores the student weights unconditionally.
-        Safe to use inside `torch.no_grad()`.  If EMA has not been initialized yet (step 0),
-        this is a no-op and the current student weights are used instead.
+        Safe to use inside `torch.no_grad()`. The first call snapshots the initial
+        student parameters before any optimizer update.
 
         ZeRO-3 note: direct `param.data` assignment bypasses ZeRO-3's shard lifecycle and
         corrupts its internal state, causing size-mismatch errors during gradient-checkpoint
@@ -653,15 +685,23 @@ class OPSDTrainer(SFTTrainer):
         `deepspeed.zero.GatheredParameters` so the parameters are fully materialised on every
         rank before we touch them, and ZeRO-3 re-partitions cleanly when the context exits.
         """
-        if self._ema_params is None:
-            yield  # EMA not yet initialized; fall back to current weights
-            return
-
         unwrapped = self.accelerator.unwrap_model(model)
 
         # Detect ZeRO-3 (same pattern used elsewhere in this file)
         deepspeed_plugin = self.accelerator.state.deepspeed_plugin
         zero_stage_3 = deepspeed_plugin is not None and deepspeed_plugin.zero_stage == 3
+
+        if self._ema_params is None:
+            trainable = [(name, param) for name, param in unwrapped.named_parameters() if param.requires_grad]
+            if zero_stage_3:
+                import deepspeed
+
+                with deepspeed.zero.GatheredParameters([param for _, param in trainable]):
+                    self._ema_params = {name: param.data.clone().detach() for name, param in trainable}
+            else:
+                self._ema_params = {name: param.data.clone().detach() for name, param in trainable}
+            n_params = sum(param.numel() for param in self._ema_params.values())
+            print(f"\nEMA teacher initialized before first forward: {n_params:,} parameters")
 
         if zero_stage_3:
             import deepspeed
@@ -786,6 +826,23 @@ class OPSDTrainer(SFTTrainer):
             del outputs_teacher
             empty_cache()
 
+        reference_logits_for_loss = None
+        if self.loss_mode == "sr_opsd" and self.reference_teacher_weight < 1.0:
+            unwrapped_model = self.accelerator.unwrap_model(model)
+            if not is_peft_model(unwrapped_model):
+                raise RuntimeError("SR-OPSD requires a PEFT model for the frozen base reference")
+
+            # The reference is the unchanged initial/base policy evaluated on
+            # the same privileged context and response as the EMA teacher.
+            with torch.no_grad(), unwrapped_model.disable_adapter():
+                outputs_reference = model(
+                    input_ids=inputs["teacher_input_ids"],
+                    attention_mask=inputs["teacher_attention_mask"],
+                )
+                reference_logits_for_loss = outputs_reference.logits[:, teacher_prompt_len - 1 : -1, :]
+                del outputs_reference
+                empty_cache()
+
         # === COMPUTE LOSS with only small tensors ===
         if self.use_thinking_machines_loss:
             # Thinking Machines uses RL-style policy gradient:
@@ -828,6 +885,18 @@ class OPSDTrainer(SFTTrainer):
                     token_clip=self.jsd_token_clip,
                 )
                 self._distil_metrics_accum = _distil_metrics
+            elif self.loss_mode == "sr_opsd":
+                loss = sr_opsd_loss_from_logits(
+                    student_logits=student_logits_for_loss,
+                    teacher_logits=teacher_logits_for_loss,
+                    reference_logits=reference_logits_for_loss,
+                    labels=shifted_labels,
+                    rho=self.renyi_rho,
+                    teacher_weight=self.reference_teacher_weight,
+                    temperature=self.temperature,
+                    top_k=self.top_k_loss,
+                    token_clip=self.renyi_token_clip,
+                )
             else:
                 loss = self.generalized_jsd_loss(
                     student_logits=student_logits_for_loss,
@@ -839,6 +908,8 @@ class OPSDTrainer(SFTTrainer):
                     token_clip=self.jsd_token_clip,
                 )
             del student_logits_for_loss, teacher_logits_for_loss
+            if reference_logits_for_loss is not None:
+                del reference_logits_for_loss
 
         empty_cache()
 

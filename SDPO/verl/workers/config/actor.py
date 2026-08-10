@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -43,6 +44,11 @@ class SelfDistillationConfig(BaseConfig):
         Distillation is enabled when policy_loss.loss_mode == "sdpo".
         full_logit_distillation (bool): Whether to use full-logit KL distillation.
         alpha (float): KL interpolation coefficient. 0.0=forward KL, 1.0=reverse KL, in-between=JSD.
+        divergence (str): Explicit divergence override. "auto" preserves alpha routing; "renyi_forward" selects SR-OPSD.
+        rho (float): Rényi order used by divergence="renyi_forward".
+        reference_policy (bool): Whether to mix an independent frozen reference into the privileged target.
+        reference_teacher_weight (float): EMA-teacher weight in the normalized geometric target.
+        reference_sync_steps (int): Optional hard-sync interval for the reference; zero keeps it frozen.
         success_reward_threshold (float): Minimum sequence reward to be considered successful.
         teacher_regularization (str): Teacher regularization mode. Options: "ema", "trust-region".
         teacher_update_rate (float): EMA update rate for teacher weights, or trust-region mixing coefficient.
@@ -64,6 +70,11 @@ class SelfDistillationConfig(BaseConfig):
 
     full_logit_distillation: bool = True
     alpha: float = 0.0
+    divergence: str = "auto"
+    rho: float = 0.95
+    reference_policy: bool = False
+    reference_teacher_weight: float = 0.9
+    reference_sync_steps: int = 0
     success_reward_threshold: float = 1.0
     teacher_regularization: str = "ema"
     teacher_update_rate: float = 0.05
@@ -94,12 +105,43 @@ class SelfDistillationConfig(BaseConfig):
     def __post_init__(self):
         if not 0.0 <= self.alpha <= 1.0:
             raise ValueError(f"self_distillation.alpha must be in [0,1], got {self.alpha}")
+        if self.divergence not in {"auto", "renyi_forward"}:
+            raise ValueError(
+                "self_distillation.divergence must be 'auto' or 'renyi_forward', "
+                f"got {self.divergence}"
+            )
+        if self.divergence == "renyi_forward":
+            if not self.full_logit_distillation:
+                raise ValueError("renyi_forward requires full_logit_distillation=True")
+            if not self.reference_policy:
+                raise ValueError("renyi_forward requires reference_policy=True for SR-OPSD")
+            if not math.isfinite(self.rho) or self.rho <= 0.0 or math.isclose(
+                self.rho, 1.0, rel_tol=0.0, abs_tol=1e-12
+            ):
+                raise ValueError(
+                    f"self_distillation.rho must be finite, positive, and different from 1, got {self.rho}"
+                )
+        if not 0.0 <= self.reference_teacher_weight <= 1.0:
+            raise ValueError(
+                "self_distillation.reference_teacher_weight must be in [0,1], "
+                f"got {self.reference_teacher_weight}"
+            )
+        if self.reference_sync_steps < 0:
+            raise ValueError(
+                f"self_distillation.reference_sync_steps must be non-negative, got {self.reference_sync_steps}"
+            )
+        if self.reference_sync_steps != 0:
+            raise ValueError(
+                "reference_sync_steps is intentionally fixed at 0: SR-OPSD uses the frozen initial policy"
+            )
         valid_teacher_regularization = ["ema", "trust-region"]
         if self.teacher_regularization not in valid_teacher_regularization:
             raise ValueError(
                 "self_distillation.teacher_regularization must be one of "
                 f"{valid_teacher_regularization}, got {self.teacher_regularization}"
             )
+        if self.divergence == "renyi_forward" and self.teacher_regularization != "ema":
+            raise ValueError("SR-OPSD renyi_forward requires teacher_regularization='ema'")
         if not 0.0 <= self.teacher_update_rate <= 1.0:
             raise ValueError(
                 f"self_distillation.teacher_update_rate must be in [0,1], got {self.teacher_update_rate}"

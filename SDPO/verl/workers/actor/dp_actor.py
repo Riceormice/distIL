@@ -29,7 +29,13 @@ from torch.distributed.tensor import DTensor
 
 import verl.utils.torch_functional as verl_F
 from verl import DataProto
-from verl.trainer.ppo.core_algos import agg_loss, compute_self_distillation_loss, compute_distil_self_distillation_loss, get_policy_loss_fn, kl_penalty
+from verl.trainer.ppo.core_algos import (
+    agg_loss,
+    compute_distil_self_distillation_loss,
+    compute_self_distillation_loss,
+    get_policy_loss_fn,
+    kl_penalty,
+)
 from verl.utils.attention_utils import index_first_axis, pad_input, rearrange, unpad_input
 from verl.utils.device import get_device_id, get_device_name
 from verl.utils.fsdp_utils import FSDPModule, fsdp2_clip_grad_norm_
@@ -79,6 +85,7 @@ class DataParallelPPOActor(BasePPOActor):
         self.actor_module = actor_module
         self.actor_optimizer = actor_optimizer
         self.teacher_module: Optional[nn.Module] = None
+        self.reference_module: Optional[nn.Module] = None
         role = "Ref" if actor_optimizer is None else "Actor"
 
         self.use_remove_padding = self.config.get("use_remove_padding", False)
@@ -830,8 +837,34 @@ class DataParallelPPOActor(BasePPOActor):
                         teacher_log_prob = teacher_outputs["log_probs"]
                         teacher_all_logps = teacher_outputs.get("all_logps") if return_all_logps else None
                         teacher_topk_logps = teacher_outputs.get("topk_logps") if distill_topk else None
-                        _loss_fn = compute_distil_self_distillation_loss if loss_mode == "distil" else compute_self_distillation_loss
-                        pg_loss, pg_metrics = _loss_fn(
+                        ref_log_prob = None
+                        ref_all_logps = None
+                        ref_topk_logps = None
+                        if self_distillation_cfg.get("reference_policy", False):
+                            if self.reference_module is None:
+                                raise ValueError(
+                                    "reference_policy=True requires a frozen reference_module in the actor worker"
+                                )
+                            with torch.no_grad():
+                                ref_outputs = self._forward_micro_batch(
+                                    teacher_inputs,
+                                    temperature=temperature,
+                                    calculate_entropy=False,
+                                    return_all_logps=return_all_logps,
+                                    distill_topk=distill_topk,
+                                    topk_indices=student_topk_indices,
+                                    module=self.reference_module,
+                                )
+                            ref_log_prob = ref_outputs["log_probs"]
+                            ref_all_logps = ref_outputs.get("all_logps") if return_all_logps else None
+                            ref_topk_logps = ref_outputs.get("topk_logps") if distill_topk else None
+
+                        _loss_fn = (
+                            compute_distil_self_distillation_loss
+                            if loss_mode == "distil"
+                            else compute_self_distillation_loss
+                        )
+                        loss_kwargs = dict(
                             student_log_probs=log_prob,
                             teacher_log_probs=teacher_log_prob,
                             response_mask=response_mask,
@@ -845,6 +878,13 @@ class DataParallelPPOActor(BasePPOActor):
                             loss_agg_mode=loss_agg_mode,
                             rollout_is_weights=rollout_is_weights,
                         )
+                        if loss_mode == "sdpo":
+                            loss_kwargs.update(
+                                ref_log_probs=ref_log_prob,
+                                ref_all_log_probs=ref_all_logps,
+                                ref_topk_log_probs=ref_topk_logps,
+                            )
+                        pg_loss, pg_metrics = _loss_fn(**loss_kwargs)
 
                         pg_metrics["self_distillation/empty_target_batch"] = self_distillation_mask.sum().item() == 0
                         micro_batch_metrics.update(pg_metrics)
