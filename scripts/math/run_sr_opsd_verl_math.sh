@@ -9,6 +9,7 @@ SEED="${SEED:-0}"
 TOTAL_STEPS="${TOTAL_STEPS:-100}"
 SAVE_FREQ="${SAVE_FREQ:-20}"
 NUM_GPUS="${NUM_GPUS:-8}"
+SELF_REFERENCE_WEIGHT="${SELF_REFERENCE_WEIGHT:-0.9}"
 
 case "${MODEL_SIZE}" in
   4b)
@@ -28,7 +29,7 @@ esac
 DATA_JSONL="${DATA_JSONL:-${REPO_ROOT}/OPSD/data/math/train.jsonl}"
 DATA_DIR="${DATA_DIR:-/media/vlm-ckp-fileset/ylong/sdpo_math_data/distil_math}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/sr_opsd_verl_math}"
-RUN_NAME="${RUN_NAME:-sr-opsd-${MODEL_SIZE}-seed${SEED}-rho0.95-refw0.9-sync0-lr5e-6-tok16384-steps${TOTAL_STEPS}}"
+RUN_NAME="${RUN_NAME:-sr-opsd-${MODEL_SIZE}-seed${SEED}-rho0.95-refw${SELF_REFERENCE_WEIGHT}-sync0-lr5e-6-tok16384-steps${TOTAL_STEPS}}"
 RUN_DIR="${RUN_DIR:-${OUTPUT_ROOT}/checkpoints/${RUN_NAME}}"
 LOG_DIR="${LOG_DIR:-${OUTPUT_ROOT}/logs/${RUN_NAME}}"
 
@@ -47,7 +48,7 @@ export TOKENIZERS_PARALLELISM=false
 export VLLM_USE_V1=1
 export NCCL_CUMEM_ENABLE=0
 export VERL_FILE_LOGGER_PATH="${LOG_DIR}/metrics.jsonl"
-export NUM_GPUS
+export NUM_GPUS SELF_REFERENCE_WEIGHT
 
 if [[ ! -s "${DATA_DIR}/train.parquet" || ! -s "${DATA_DIR}/test.parquet" || "${DATA_JSONL}" -nt "${DATA_DIR}/train.parquet" ]]; then
   "${PYTHON_BIN}" "${SDPO_DIR}/examples/data_preprocess/distil_math_jsonl.py" \
@@ -69,11 +70,12 @@ print("vllm", vllm.__version__)
 for index in range(torch.cuda.device_count()):
     print(index, torch.cuda.get_device_name(index), torch.cuda.get_device_capability(index))
 
+reference_teacher_weight = float(__import__("os").environ["SELF_REFERENCE_WEIGHT"])
 config = SelfDistillationConfig(
     divergence="renyi_forward",
     rho=0.95,
     reference_policy=True,
-    reference_teacher_weight=0.9,
+    reference_teacher_weight=reference_teacher_weight,
     reference_sync_steps=0,
     teacher_regularization="ema",
 )
@@ -121,7 +123,7 @@ ARGS=(
   "actor_rollout_ref.actor.self_distillation.divergence=renyi_forward"
   "actor_rollout_ref.actor.self_distillation.rho=0.95"
   "actor_rollout_ref.actor.self_distillation.reference_policy=True"
-  "actor_rollout_ref.actor.self_distillation.reference_teacher_weight=0.9"
+  "actor_rollout_ref.actor.self_distillation.reference_teacher_weight=${SELF_REFERENCE_WEIGHT}"
   "actor_rollout_ref.actor.self_distillation.reference_sync_steps=0"
   "actor_rollout_ref.actor.self_distillation.teacher_regularization=ema"
   "actor_rollout_ref.actor.self_distillation.teacher_update_rate=0.05"
@@ -171,6 +173,6 @@ echo "RUN_NAME=${RUN_NAME}"
 echo "RUN_DIR=${RUN_DIR}"
 echo "MODEL_PATH=${MODEL_PATH}"
 echo "TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE}"
-echo "PARAMETERS=rho0.95 refw0.9 sync0 ema0.05 lr5e-6 linear warmup0 tok16384"
+echo "PARAMETERS=rho0.95 refw${SELF_REFERENCE_WEIGHT} sync0 ema0.05 lr5e-6 linear warmup0 tok16384"
 
 exec "${PYTHON_BIN}" -m verl.trainer.main_ppo --config-name sdpo "${ARGS[@]}"
