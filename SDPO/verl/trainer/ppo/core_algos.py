@@ -29,12 +29,6 @@ import torch.nn.functional as F
 from omegaconf import DictConfig
 
 import verl.utils.torch_functional as verl_F
-from verl.trainer.ppo.sr_opsd_loss import (
-    add_tail_bucket,
-    forward_renyi_divergence,
-    geometric_target_log_probs,
-    normalize_log_probs,
-)
 from verl.trainer.config import AlgoConfig
 from verl.utils import as_torch_index, group_mean_std
 from verl.utils.import_utils import deprecated
@@ -1088,6 +1082,25 @@ def agg_loss(
     return loss
 
 
+def compute_renyi_kl_loss(
+    input_log_probs: torch.Tensor,
+    target_log_probs: torch.Tensor,
+    self_distillation_config: Any,
+) -> torch.Tensor:
+    """Compute the native SDPO Renyi objective for each token."""
+    rho = getattr(self_distillation_config, "rho", 0.25)
+    reversed_renyi = getattr(self_distillation_config, "alpha", 0.0) == 0.75
+    kl_loss = torch.logsumexp(
+        rho * input_log_probs + (1 - rho) * target_log_probs,
+        dim=-1,
+        keepdim=True,
+    ) / (rho - 1)
+
+    if reversed_renyi and rho in (0.1, 0.3):
+        kl_loss = rho * kl_loss
+    return kl_loss
+
+
 def compute_self_distillation_loss(
     student_log_probs: torch.Tensor,
     teacher_log_probs: torch.Tensor,
@@ -1118,17 +1131,23 @@ def compute_self_distillation_loss(
             if student_topk_log_probs is None or teacher_topk_log_probs is None:
                 raise ValueError("top-k distillation requires student_topk_log_probs and teacher_topk_log_probs.")
 
+            def add_tail(log_probs: torch.Tensor) -> torch.Tensor:
+                log_s = torch.logsumexp(log_probs, dim=-1, keepdim=True)
+                log_s = torch.clamp(log_s, max=-1e-7)
+                tail_log = torch.log(-torch.expm1(log_s))
+                return torch.cat([log_probs, tail_log], dim=-1)
+
             def renorm_topk_log_probs(logp: torch.Tensor) -> torch.Tensor:
-                return normalize_log_probs(logp)
+                return logp - torch.logsumexp(logp, dim=-1, keepdim=True)
 
             student_distill_log_probs = student_topk_log_probs
             teacher_distill_log_probs = teacher_topk_log_probs
             ref_distill_log_probs = ref_topk_log_probs if ref_topk_log_probs is not None else None
             if self_distillation_config.distillation_add_tail:
-                student_distill_log_probs = add_tail_bucket(student_distill_log_probs)
-                teacher_distill_log_probs = add_tail_bucket(teacher_distill_log_probs)
+                student_distill_log_probs = add_tail(student_distill_log_probs)
+                teacher_distill_log_probs = add_tail(teacher_distill_log_probs)
                 ref_distill_log_probs = (
-                    add_tail_bucket(ref_distill_log_probs) if ref_distill_log_probs is not None else None
+                    add_tail(ref_distill_log_probs) if ref_distill_log_probs is not None else None
                 )
             else:
                 student_distill_log_probs = renorm_topk_log_probs(student_distill_log_probs)
@@ -1143,31 +1162,32 @@ def compute_self_distillation_loss(
             teacher_distill_log_probs = teacher_all_log_probs
             ref_distill_log_probs = ref_all_log_probs if ref_all_log_probs is not None else None
 
-        if self_distillation_config.reference_policy:
+        if self_distillation_config.renyi_regularization:
             if ref_distill_log_probs is None:
-                raise ValueError("reference_policy=True requires reference-model distribution log probabilities")
-            teacher_inputs = geometric_target_log_probs(
-                teacher_distill_log_probs,
-                ref_distill_log_probs,
-                self_distillation_config.reference_teacher_weight,
-            )
+                raise ValueError("Renyi regularization requires reference-model distribution log probabilities")
+            alpha_renyi = self_distillation_config.renyi_regularization_level
+            teacher_inputs = alpha_renyi * teacher_distill_log_probs + (1 - alpha_renyi) * ref_distill_log_probs
         else:
-            teacher_inputs = normalize_log_probs(teacher_distill_log_probs)
+            teacher_inputs = teacher_distill_log_probs
 
-        if self_distillation_config.divergence == "renyi_forward":
-            kl_loss = forward_renyi_divergence(
-                teacher_inputs,
-                student_distill_log_probs,
-                self_distillation_config.rho,
-            ).unsqueeze(-1)
-        elif self_distillation_config.alpha == 0.0:
+        if self_distillation_config.alpha == 0.0:
             kl_loss = F.kl_div(
                 student_distill_log_probs, teacher_inputs, reduction="none", log_target=True
             )
-        elif self_distillation_config.alpha == 1.0:
-            kl_loss = F.kl_div(
-                teacher_inputs, student_distill_log_probs, reduction="none", log_target=True
+        elif self_distillation_config.alpha == 0.75:
+            kl_loss = compute_renyi_kl_loss(
+                student_distill_log_probs,
+                teacher_inputs,
+                self_distillation_config,
             )
+        elif self_distillation_config.alpha == 0.25:
+            kl_loss = compute_renyi_kl_loss(
+                teacher_inputs,
+                student_distill_log_probs,
+                self_distillation_config,
+            )
+        elif self_distillation_config.alpha == 1.0:
+            kl_loss = torch.exp(student_distill_log_probs) * (student_distill_log_probs - teacher_inputs)
         else:
             # Compute the log of the mixture distribution
             # log(a + b) = log(exp(log(a)) + exp(log(b))) -> for mixture
@@ -1177,11 +1197,23 @@ def compute_self_distillation_loss(
                 device=student_distill_log_probs.device,
             )
             mixture_log_probs = torch.logsumexp(
-                torch.stack([student_distill_log_probs + torch.log(1 - alpha), teacher_inputs + torch.log(alpha)]),
+                torch.stack(
+                    [
+                        student_distill_log_probs + torch.log(1 - alpha),
+                        teacher_distill_log_probs + torch.log(alpha),
+                    ]
+                ),
                 dim=0,
             )
-            kl_teacher = F.kl_div(mixture_log_probs, teacher_inputs, reduction="none", log_target=True)
-            kl_student = F.kl_div(mixture_log_probs, student_distill_log_probs, reduction="none", log_target=True)
+            kl_teacher = F.kl_div(
+                mixture_log_probs,
+                teacher_distill_log_probs,
+                reduction="none",
+                log_target=True,
+            )
+            kl_student = torch.exp(student_distill_log_probs) * (
+                student_distill_log_probs - mixture_log_probs
+            )
             kl_loss = torch.lerp(kl_student, kl_teacher, alpha)  # Compute the Generalized Jensen-Shannon Divergence
 
         per_token_loss = kl_loss.sum(-1)

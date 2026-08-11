@@ -1,41 +1,58 @@
-# SR-OPSD mathematics pipeline
+# Native SDPO SR-OPSD mathematics training
 
-This pipeline trains the true SR-OPSD objective in VERL and evaluates exported
-checkpoints with the distIL mathematics evaluator.
+This branch contains the mathematics training path from the SDPO `math-train`
+fork. Training uses VERL; the distIL code is retained only for the independent
+five-benchmark evaluator.
 
 ## Objective
 
-- Student: optimized policy.
-- Self-teacher: exponential moving average of the student, update rate `0.05`.
-- Reference: frozen initial policy; synchronization is disabled (`sync=0`).
-- Target: normalized geometric mixture with default self-teacher weight `0.9`.
-- Projection: forward Renyi divergence with order `rho=0.95`.
-- Legacy SDPO selector `alpha` is recorded as `0.25`; the explicit
-  `divergence=renyi_forward` setting controls the implemented objective.
-- Distribution: student-selected top-100 tokens plus one exact tail-mass bucket.
+- `alpha=0.25` selects Forward Renyi in the native SDPO implementation.
+- `rho=0.95` is the Renyi order.
+- `renyi_regularization=True` enables the frozen-reference target.
+- `renyi_regularization_level=0.9` is the default self-reference weight.
+- `renyi_ref_sync_steps=0` keeps the reference at the initial policy.
+- The self-teacher is an EMA model with update rate `0.01`.
+- The student, EMA teacher, and frozen reference are distinct FSDP models.
 
-The actor, EMA teacher, and frozen reference are distinct FSDP models. EMA state
-is saved next to every actor checkpoint, so an automatic resume preserves the
-training objective.
+The EMA teacher is saved beside every actor checkpoint so that automatic resume
+preserves the training state.
 
-## Aligned mathematics parameters
+## Data
 
-- 8 GPUs, seed 0, 100 optimizer steps.
-- Checkpoints at steps 20, 40, 60, 80, and 100.
-- Effective question batch 8 for 4B and 16 for 8B; eight rollouts per question.
-- Maximum prompt/response lengths: 2048/16384.
-- Training sampling: temperature 0.7, top-p 0.95, top-k 20.
-- AdamW, learning rate `5e-6`, linear decay, zero warmup, zero weight decay,
-  gradient norm clip 0.1.
-- Local console/JSONL logging only.
+The author-provided JSONL files are committed under
+`SDPO/datasets/math_probs`. Generate the VERL parquet files with:
 
-Evaluation uses thinking mode, 64 samples per problem, min-p 0, presence
-penalty 0, and TP=8. The 4B sampler uses temperature 0.7, top-p 0.95, top-k
-20, and 16384 new tokens; the 8B sampler uses temperature 1.0, top-p 1.0,
-disabled top-k (`-1`), and 38912 new tokens. The five datasets are AIME24,
-AIME25, HMMT25, AMC23, and Minerva.
+```bash
+PYTHON_BIN=/path/to/verl/bin/python bash SDPO/prepare_math_data.sh
+```
 
-## Run
+Both JSONL files contain 758 records. They are used for in-training Math reward
+and validation only; final reporting remains the external AIME24, AIME25,
+HMMT25, AMC23, and Minerva evaluation.
+
+## Direct training
+
+```bash
+PYTHON_BIN=/path/to/verl/bin/python \
+MODEL_PATH=/path/to/Qwen3-8B \
+NUM_GPUS=8 \
+TOTAL_STEPS=100 \
+TEST_FREQ=5 \
+SAVE_FREQ=20 \
+TRAINER_LOGGER='[console,file]' \
+bash run_local_ours_math.sh
+```
+
+Defaults follow the supplied script: LoRA rank 64/alpha 128, batch size 32,
+eight rollouts, learning rate `5e-6`, constant schedule with 10 warmup steps,
+prompt/response lengths 2048/8192, rollout temperature 0.8, top-p 0.95,
+and 15 maximum epochs (the explicit step limit remains authoritative). Every
+value can be overridden through an environment variable.
+
+## Training plus five-benchmark evaluation
+
+The compatibility wrapper uses full-parameter training (`LORA_RANK=0`) because
+the external evaluator expects a merged Hugging Face model:
 
 ```bash
 PYTHON_BIN=/path/to/verl/bin/python \
@@ -45,10 +62,5 @@ NUM_GPUS=8 \
 bash scripts/math/run_sr_opsd_verl_math_pipeline.sh
 ```
 
-Set `PHASE=train` or `PHASE=eval` to run one phase. Both phases are restartable;
-training uses VERL auto-resume and evaluation skips only JSON files that pass
-the problem/sample-count validator.
-
-`SELF_REFERENCE_WEIGHT` overrides the self-teacher weight without changing any
-other method or optimization parameter. For example, set it to `0.95`, `0.9`,
-`0.85`, or `0.8` for the four-lane coefficient sweep.
+Set `PHASE=train` or `PHASE=eval` to run only one phase. Evaluation uses
+thinking mode and 64 samples per problem across all five Math benchmarks.

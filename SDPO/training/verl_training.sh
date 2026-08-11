@@ -1,11 +1,15 @@
 #!/bin/bash
 unset VLLM_ATTENTION_BACKEND
+# if using NPU
+# export VLLM_ASCEND_ENABLE_NZ=0
 export VLLM_USE_V1=1
 export PYTHONBUFFERED=1
 # export RAY_DEBUG=1
 ulimit -c 0
 
-export WANDB_ENTITY="sample-efficient-rlvr" # team
+if [ -n "${WANDB_ENTITY:-}" ]; then
+    export WANDB_ENTITY
+fi
 export EXPERIMENT=${1:-"experiment"}
 CONFIG_NAME=${2:-"ppo_trainer"}
 export TASK=${3:-"datasets/ttcs/lasgroup_verifiable-corpus_math-ai_math500_1000"}

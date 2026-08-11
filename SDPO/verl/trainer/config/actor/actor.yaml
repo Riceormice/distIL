@@ -92,26 +92,23 @@ self_distillation:
   # Whether to add a tail bucket when using distillation_topk
   distillation_add_tail: True
 
-  # KL interpolation coefficient: 0.0=forward KL, 1.0=reverse KL, in-between=JSD
+  # KL interpolation coefficient. 0.0=forward KL, 0.25=Renyi-Forward KL, 0.75=Renyi-Reverse KL, 1.0=reverse KL, otherwise=JSD.
   alpha: 0.5 
 
-  # Explicit divergence override. "auto" preserves alpha behavior.
-  divergence: auto
-
-  # Renyi order for divergence=renyi_forward
-  rho: 0.95
-
-  # Mix an independent frozen reference into the privileged teacher target
-  reference_policy: False
-
-  # EMA-teacher weight in the normalized geometric target
-  reference_teacher_weight: 0.9
-
-  # Reference synchronization is disabled; SR-OPSD uses the frozen initial policy
-  reference_sync_steps: 0
+  # Rho parameter for Renyi-Forward KL and Renyi-Reverse KL, default=0.25. Only used when alpha is 0.25 or 0.75.
+  rho: 0.25
 
   # Minimum sequence reward to be considered successful
   success_reward_threshold: 0.5
+
+  # Wheter to use Renyi-Regulation
+  renyi_regularization: False
+
+  # Renyi-Regulation level
+  renyi_regularization_level: 0.5
+
+  # Sync frozen renyi_ref from actor every N global steps (0 = disabled)
+  renyi_ref_sync_steps: 0
 
   # Teacher regularization method: "ema" or "trust-region"
   teacher_regularization: ema

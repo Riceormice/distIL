@@ -1,48 +1,75 @@
+from types import SimpleNamespace
+
 import pytest
 import torch
 
-from verl.trainer.ppo.sr_opsd_loss import (
-    add_tail_bucket,
-    forward_renyi_divergence,
-    geometric_target_log_probs,
-    normalize_log_probs,
-)
+from verl.trainer.ppo.core_algos import compute_renyi_kl_loss, compute_self_distillation_loss
+from verl.workers.config.actor import SelfDistillationConfig
 
 
-def test_geometric_target_endpoints_and_normalization():
-    teacher = torch.log(torch.tensor([[0.7, 0.2, 0.1]]))
-    reference = torch.log(torch.tensor([[0.1, 0.3, 0.6]]))
-
-    teacher_only = geometric_target_log_probs(teacher, reference, 1.0)
-    reference_only = geometric_target_log_probs(teacher, reference, 0.0)
-    mixed = geometric_target_log_probs(teacher, reference, 0.9)
-
-    torch.testing.assert_close(teacher_only.exp(), teacher.exp())
-    torch.testing.assert_close(reference_only.exp(), reference.exp())
-    torch.testing.assert_close(mixed.exp().sum(-1), torch.ones(1))
-
-
-def test_tail_bucket_preserves_omitted_mass():
-    selected = torch.log(torch.tensor([[0.4, 0.35]]))
-    with_tail = add_tail_bucket(selected)
-    torch.testing.assert_close(with_tail.exp(), torch.tensor([[0.4, 0.35, 0.25]]))
+def native_config(**overrides):
+    values = {
+        "full_logit_distillation": True,
+        "distillation_topk": None,
+        "distillation_add_tail": True,
+        "renyi_regularization": True,
+        "renyi_regularization_level": 0.9,
+        "alpha": 0.25,
+        "rho": 0.95,
+        "is_clip": None,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
 
 
-def test_forward_renyi_is_zero_for_identical_distributions_and_has_gradient():
-    target = normalize_log_probs(torch.tensor([[1.0, -0.5, 0.25]]))
-    same = forward_renyi_divergence(target, target, rho=0.95)
-    torch.testing.assert_close(same, torch.zeros_like(same), atol=1e-6, rtol=0)
+def test_native_forward_renyi_formula():
+    teacher = torch.log_softmax(torch.tensor([[2.0, 0.5, -0.5]]), dim=-1)
+    student = torch.log_softmax(torch.tensor([[0.2, 1.0, -0.1]]), dim=-1)
+    cfg = native_config(rho=0.7)
 
-    student_logits = torch.tensor([[0.2, 0.1, -0.4]], requires_grad=True)
-    loss = forward_renyi_divergence(target, student_logits, rho=0.95).mean()
-    loss.backward()
-    assert torch.isfinite(loss)
-    assert student_logits.grad is not None
-    assert torch.isfinite(student_logits.grad).all()
+    actual = compute_renyi_kl_loss(teacher, student, cfg)
+    expected = torch.logsumexp(0.7 * teacher + 0.3 * student, dim=-1, keepdim=True) / -0.3
+
+    torch.testing.assert_close(actual, expected)
 
 
-@pytest.mark.parametrize("rho", [-1.0, 0.0, 1.0, float("inf"), float("nan")])
-def test_invalid_renyi_order_is_rejected(rho):
-    distribution = torch.log(torch.tensor([[0.5, 0.5]]))
-    with pytest.raises(ValueError):
-        forward_renyi_divergence(distribution, distribution, rho=rho)
+def test_native_sr_opsd_mixes_ema_teacher_and_frozen_reference():
+    student = torch.log_softmax(torch.tensor([[[0.2, 1.0, -0.1], [0.4, -0.2, 0.7]]]), dim=-1)
+    teacher = torch.log_softmax(torch.tensor([[[2.0, 0.5, -0.5], [0.1, 1.1, -0.3]]]), dim=-1)
+    reference = torch.log_softmax(torch.tensor([[[0.3, 0.2, 1.0], [1.0, 0.0, -0.2]]]), dim=-1)
+    mask = torch.ones((1, 2))
+    cfg = native_config(rho=0.7, renyi_regularization_level=0.8)
+
+    loss, _ = compute_self_distillation_loss(
+        student_log_probs=torch.zeros((1, 2)),
+        teacher_log_probs=torch.zeros((1, 2)),
+        response_mask=mask,
+        self_distillation_config=cfg,
+        student_all_log_probs=student,
+        teacher_all_log_probs=teacher,
+        ref_all_log_probs=reference,
+    )
+
+    target = 0.8 * teacher + 0.2 * reference
+    expected_per_token = torch.logsumexp(0.7 * target + 0.3 * student, dim=-1) / -0.3
+    torch.testing.assert_close(loss, expected_per_token.mean())
+
+
+def test_native_sr_opsd_requires_reference_logits():
+    probs = torch.log_softmax(torch.tensor([[[0.2, 1.0, -0.1]]]), dim=-1)
+    with pytest.raises(ValueError, match="requires reference-model"):
+        compute_self_distillation_loss(
+            student_log_probs=torch.zeros((1, 1)),
+            teacher_log_probs=torch.zeros((1, 1)),
+            response_mask=torch.ones((1, 1)),
+            self_distillation_config=native_config(),
+            student_all_log_probs=probs,
+            teacher_all_log_probs=probs,
+        )
+
+
+def test_native_config_rejects_invalid_renyi_parameters():
+    with pytest.raises(ValueError, match="different from 1"):
+        SelfDistillationConfig(alpha=0.25, rho=1.0)
+    with pytest.raises(ValueError, match=r"must be in \[0,1\]"):
+        SelfDistillationConfig(renyi_regularization=True, renyi_regularization_level=1.1)

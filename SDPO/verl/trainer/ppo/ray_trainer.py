@@ -1597,6 +1597,7 @@ class RayPPOTrainer:
         self.global_steps += 1
         last_val_metrics = None
         self.max_steps_duration = 0
+        self.cumulative_step_time_s = 0.0
 
         prev_step_profile = False
         curr_step_profile = (
@@ -1844,6 +1845,17 @@ class RayPPOTrainer:
                         # update actor
                         with marked_timer("update_actor", timing_raw, color="red"):
                             actor_output = self._update_actor(batch)
+                            self_distillation_cfg = self.config.actor_rollout_ref.actor.get(
+                                "self_distillation", {}
+                            )
+                            renyi_ref_sync_steps = self_distillation_cfg.get("renyi_ref_sync_steps", 0)
+                            if (
+                                self_distillation_cfg.get("renyi_regularization", False)
+                                and renyi_ref_sync_steps > 0
+                                and self.global_steps % renyi_ref_sync_steps == 0
+                            ):
+                                with marked_timer("update_renyi_ref", timing_raw, color="red"):
+                                    self.actor_rollout_wg.update_renyi_ref()
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                         metrics.update(actor_output_metrics)
 
@@ -1899,6 +1911,8 @@ class RayPPOTrainer:
                     curr_step_profile = next_step_profile
 
                 steps_duration = timing_raw["step"]
+                self.cumulative_step_time_s += steps_duration
+                metrics["training/cumulative_step_time_s"] = self.cumulative_step_time_s
                 self.max_steps_duration = max(self.max_steps_duration, steps_duration)
 
                 # training metrics

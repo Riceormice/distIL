@@ -189,11 +189,11 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         self._is_lora = self.config.model.get("lora_adapter_path") is not None or self._lora_rank > 0
 
         self.role = role
-        assert self.role in ["actor", "rollout", "ref", "actor_rollout", "actor_rollout_ref"]
+        assert self.role in ["actor", "rollout", "ref", "actor_rollout", "actor_rollout_ref", "renyi_ref"]
 
         self._is_actor = self.role in ["actor", "actor_rollout", "actor_rollout_ref"]
         self._is_rollout = self.role in ["rollout", "actor_rollout", "actor_rollout_ref"]
-        self._is_ref = self.role in ["ref", "actor_rollout_ref"]
+        self._is_ref = self.role in ["ref", "actor_rollout_ref", "renyi_ref"]
         self.use_orig_params = self.config.actor.fsdp_config.get("use_orig_params", False)
 
         # TODO(haibin.lin):
@@ -213,7 +213,7 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         else:
             raise ValueError(
                 f"Invalid role {self.role}, should be one of "
-                "['actor', 'rollout', 'ref', 'actor_rollout', 'actor_rollout_ref']"
+                "['actor', 'rollout', 'ref', 'actor_rollout', 'actor_rollout_ref', 'renyi_ref']"
             )
         # omega_profiler_config is DictConfig
         # profiler_config is a ProfilerConfig dataclass
@@ -302,7 +302,7 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         from verl.utils.model import get_generation_config, print_model_size, update_model_config
         from verl.utils.torch_dtypes import PrecisionType
 
-        assert role in ["actor", "ref"]
+        assert role in ["actor", "ref", "renyi_ref"]
 
         # TiledMLP requires FSDP2 for correct gradient computation
         if use_tiled_mlp and self.config.actor.strategy == "fsdp":
@@ -909,10 +909,17 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                             student_module=self.actor_module_fsdp,
                             mix_coef=self_distillation_cfg.get("teacher_update_rate", 0.0),
                         )
-                    elif self_distillation_cfg.get("reference_policy", False):
-                        # SR-OPSD needs two independent non-optimized policies:
-                        # an EMA self-teacher and the permanently frozen initial reference.
-                        self.teacher_module_fsdp = self._build_model_optimizer(
+                    else:
+                        self.actor.teacher_module = self.ref_module_fsdp
+                if (
+                    self_distillation_cfg is not None
+                    and loss_mode == "sdpo"
+                    and self_distillation_cfg.get("renyi_regularization", False)
+                ):
+                    if teacher_regularization == "ema":
+                        # The EMA teacher mutates self.ref_module_fsdp in-place, so
+                        # the frozen initial reference needs an independent copy.
+                        self.renyi_ref_module_fsdp = self._build_model_optimizer(
                             model_path=local_path,
                             fsdp_config=omega_conf_to_dataclass(self.config.ref.fsdp_config),
                             optim_config=None,
@@ -921,15 +928,14 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                             use_fused_kernels=use_fused_kernels,
                             trust_remote_code=self.config.model.get("trust_remote_code", False),
                             use_liger=self.config.model.get("use_liger", False),
-                            role="ref",
+                            role="renyi_ref",
                             use_prefix_grouper=use_prefix_grouper,
                             use_tiled_mlp=ref_use_tiled_mlp,
                             tiled_mlp_shards=ref_tiled_mlp_shards,
                         )[0]
-                        self.actor.teacher_module = self.teacher_module_fsdp
-                        self.actor.reference_module = self.ref_module_fsdp
+                        self.actor.renyi_ref_module = self.renyi_ref_module_fsdp
                     else:
-                        self.actor.teacher_module = self.ref_module_fsdp
+                        self.actor.renyi_ref_module = self.ref_module_fsdp
 
         if self._is_actor:
             self.flops_counter = FlopsCounter(self.actor_model_config)
@@ -940,12 +946,18 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                 processing_class=self.processor if self.processor is not None else self.tokenizer,
                 checkpoint_config=self.config.actor.checkpoint,
             )
-            if hasattr(self, "teacher_module_fsdp"):
+            checkpoint_sd_cfg = self.config.actor.get("self_distillation", None)
+            if (
+                checkpoint_sd_cfg is not None
+                and self.config.actor.policy_loss.get("loss_mode", "vanilla") == "sdpo"
+                and checkpoint_sd_cfg.get("renyi_regularization", False)
+                and checkpoint_sd_cfg.get("teacher_regularization", "ema") == "ema"
+            ):
                 teacher_checkpoint_config = OmegaConf.create(
                     {"load_contents": ["model"], "save_contents": ["model"]}
                 )
                 self.teacher_checkpoint_manager = FSDPCheckpointManager(
-                    model=self.teacher_module_fsdp,
+                    model=self.ref_module_fsdp,
                     optimizer=None,
                     lr_scheduler=None,
                     processing_class=self.processor if self.processor is not None else self.tokenizer,
@@ -1010,6 +1022,23 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
             log_gpu_memory_usage("After offload actor optimizer during update_actor", logger=logger)
 
         return output
+
+    @register(dispatch_mode=Dispatch.ONE_TO_ALL)
+    @DistProfiler.annotate(color="red", role="renyi_ref_update")
+    def update_renyi_ref(self):
+        """Copy actor weights into the frozen renyi_ref FSDP module."""
+        if not hasattr(self, "renyi_ref_module_fsdp"):
+            return
+
+        if self._is_offload_param:
+            load_fsdp_model_to_gpu(self.actor_module_fsdp)
+            load_fsdp_model_to_gpu(self.renyi_ref_module_fsdp)
+        self.actor.update_renyi_ref_model()
+
+        if self._is_offload_param:
+            offload_fsdp_model_to_cpu(self.actor_module_fsdp)
+            offload_fsdp_model_to_cpu(self.renyi_ref_module_fsdp)
+            log_gpu_memory_usage("After offload renyi_ref sync", logger=logger)
 
     @register(dispatch_mode=make_nd_compute_dataproto_dispatch_fn(mesh_name="rollout"))
     @DistProfiler.annotate(color="red", role="rollout_generate")

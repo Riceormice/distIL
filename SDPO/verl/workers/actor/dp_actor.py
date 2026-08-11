@@ -85,7 +85,7 @@ class DataParallelPPOActor(BasePPOActor):
         self.actor_module = actor_module
         self.actor_optimizer = actor_optimizer
         self.teacher_module: Optional[nn.Module] = None
-        self.reference_module: Optional[nn.Module] = None
+        self.renyi_ref_module: Optional[nn.Module] = None
         role = "Ref" if actor_optimizer is None else "Actor"
 
         self.use_remove_padding = self.config.get("use_remove_padding", False)
@@ -840,11 +840,9 @@ class DataParallelPPOActor(BasePPOActor):
                         ref_log_prob = None
                         ref_all_logps = None
                         ref_topk_logps = None
-                        if self_distillation_cfg.get("reference_policy", False):
-                            if self.reference_module is None:
-                                raise ValueError(
-                                    "reference_policy=True requires a frozen reference_module in the actor worker"
-                                )
+                        if self_distillation_cfg.renyi_regularization:
+                            if self.renyi_ref_module is None:
+                                raise ValueError("Renyi regularization requires a frozen renyi_ref_module.")
                             with torch.no_grad():
                                 ref_outputs = self._forward_micro_batch(
                                     teacher_inputs,
@@ -853,7 +851,7 @@ class DataParallelPPOActor(BasePPOActor):
                                     return_all_logps=return_all_logps,
                                     distill_topk=distill_topk,
                                     topk_indices=student_topk_indices,
-                                    module=self.reference_module,
+                                    module=self.renyi_ref_module,
                                 )
                             ref_log_prob = ref_outputs["log_probs"]
                             ref_all_logps = ref_outputs.get("all_logps") if return_all_logps else None
@@ -960,3 +958,9 @@ class DataParallelPPOActor(BasePPOActor):
         if did_update:
             self._update_teacher()
         return metrics
+
+    def update_renyi_ref_model(self) -> None:
+        """Synchronize the optional Renyi reference from the current actor."""
+        if self.renyi_ref_module is None:
+            raise ValueError("Renyi reference model is not initialized.")
+        self.renyi_ref_module.load_state_dict(self.actor_module.state_dict())

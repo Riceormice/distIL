@@ -7,7 +7,7 @@ REPO="${REPO:-${ROOT}/code/distIL-sr-opsd-renyi}"
 ENV_DIR="${ENV_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/envs/verl-vllm010-h200-v2}"
 MODEL_PATH="${MODEL_PATH:-/media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-8B}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/sr_opsd_math_refw_sweep30}"
-RUN_NAME="sr-opsd-8b-seed0-rho0.95-refw${SELF_REFERENCE_WEIGHT}-sync0-lr5e-6-tok16384-steps30-eval5"
+RUN_NAME="sr-opsd-8b-seed0-rho0.95-refw${SELF_REFERENCE_WEIGHT}-sync0-lr5e-6-tok8192-steps30-native-sdpo"
 
 unset PYTHONHOME
 unset PYTHONPATH
@@ -41,7 +41,7 @@ exec env \
   NUM_GPUS=8 \
   TOTAL_STEPS=30 \
   SAVE_FREQ=5 \
-  DATA_DIR="${OUTPUT_ROOT}/data/refw${SELF_REFERENCE_WEIGHT}" \
+  DATA_DIR="${REPO}/SDPO/datasets/math_probs" \
   OUTPUT_ROOT="${OUTPUT_ROOT}" \
   VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.35}" \
   EVAL_GPU_MEMORY_UTILIZATION="${EVAL_GPU_MEMORY_UTILIZATION:-0.90}" \
