@@ -116,6 +116,9 @@ self_distillation:
   # EMA update rate for teacher weights, or trust-region mixing coefficient
   teacher_update_rate: 0.05 
 
+  # Whether to save the EMA teacher beside actor checkpoints
+  save_teacher_checkpoint: True
+
   # Maximum length of the reprompted prompt
   max_reprompt_len: 10240
 

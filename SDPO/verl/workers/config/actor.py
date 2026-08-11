@@ -51,6 +51,7 @@ class SelfDistillationConfig(BaseConfig):
         renyi_ref_sync_steps (int): Sync frozen renyi_ref weights from the actor every N training steps. 0 disables periodic sync.
         teacher_regularization (str): Teacher regularization mode. Options: "ema", "trust-region".
         teacher_update_rate (float): EMA update rate for teacher weights, or trust-region mixing coefficient.
+        save_teacher_checkpoint (bool): Whether to save the EMA teacher beside actor checkpoints.
         distillation_topk (Optional[int]): If set, use top-k logits for distillation.
         distillation_add_tail (bool): Whether to add a tail bucket for top-k distillation.
         max_reprompt_len (int): Maximum length of the reprompted prompt.
@@ -77,6 +78,7 @@ class SelfDistillationConfig(BaseConfig):
     renyi_ref_sync_steps: int = 0
     teacher_regularization: str = "ema"
     teacher_update_rate: float = 0.05
+    save_teacher_checkpoint: bool = True
     distillation_topk: Optional[int] = None
     distillation_add_tail: bool = True
     max_reprompt_len: int = 10240

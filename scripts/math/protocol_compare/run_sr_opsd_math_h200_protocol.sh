@@ -94,9 +94,8 @@ profile=${PROFILE}
 run=${RUN_NAME}
 model=${MODEL_PATH}
 output=${OUTPUT_ROOT}
-training_validation=steps 5,10,15,20,25,30; math_probs/test; N=1
-temporary_checkpoint=30 only; deleted after successful external evaluation
-external_final_eval=AIME24,AIME25,HMMT25,AMC23,Minerva; thinking; N=64
+distill_evaluation=steps 5,10,15,20,25,30; AIME24,AIME25,HMMT25,AMC23,Minerva; thinking; N=64
+temporary_snapshots=model-only; optimizer/extra/EMA teacher disabled; each deleted after successful JSON validation
 train_batch=${TRAIN_BATCH_SIZE}, mini_batch=${PPO_MINI_BATCH_SIZE}, rollout_n=${ROLLOUT_N}
 response_length=${MAX_RESPONSE_LENGTH}, temperature=${ROLLOUT_TEMPERATURE}, top_p=0.95, top_k=${ROLLOUT_TOP_K}
 lr=5e-6, schedule=${LR_SCHEDULER_TYPE}, warmup=${WARMUP_STEPS}
@@ -115,8 +114,11 @@ exec env \
   MODEL_PATH="${MODEL_PATH}" \
   SEED=0 \
   TOTAL_STEPS=30 \
-  TEST_FREQ=5 \
-  SAVE_FREQ=30 \
+  TEST_FREQ=-1 \
+  SAVE_FREQ=5 \
+  CHECKPOINT_SAVE_CONTENTS='[model]' \
+  CHECKPOINT_LOAD_CONTENTS='[model]' \
+  SAVE_TEACHER_CHECKPOINT=False \
   SELF_REFERENCE_WEIGHT=0.9 \
   REF_SYNC_STEPS=0 \
   LEARNING_RATE=5e-6 \

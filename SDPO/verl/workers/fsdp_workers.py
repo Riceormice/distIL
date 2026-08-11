@@ -952,6 +952,7 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                 and self.config.actor.policy_loss.get("loss_mode", "vanilla") == "sdpo"
                 and checkpoint_sd_cfg.get("renyi_regularization", False)
                 and checkpoint_sd_cfg.get("teacher_regularization", "ema") == "ema"
+                and checkpoint_sd_cfg.get("save_teacher_checkpoint", True)
             ):
                 teacher_checkpoint_config = OmegaConf.create(
                     {"load_contents": ["model"], "save_contents": ["model"]}

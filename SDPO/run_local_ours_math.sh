@@ -21,6 +21,9 @@ TOTAL_EPOCHS="${TOTAL_EPOCHS:-15}"
 TEST_FREQ="${TEST_FREQ:-100}"
 SAVE_FREQ="${SAVE_FREQ:-100}"
 MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-1}"
+CHECKPOINT_SAVE_CONTENTS="${CHECKPOINT_SAVE_CONTENTS:-[model,optimizer,extra]}"
+CHECKPOINT_LOAD_CONTENTS="${CHECKPOINT_LOAD_CONTENTS:-${CHECKPOINT_SAVE_CONTENTS}}"
+SAVE_TEACHER_CHECKPOINT="${SAVE_TEACHER_CHECKPOINT:-True}"
 
 LEARNING_RATE="${LEARNING_RATE:-5e-6}"
 WARMUP_STEPS="${WARMUP_STEPS:-0}"
@@ -165,7 +168,11 @@ ARGS=(
   "actor_rollout_ref.actor.self_distillation.renyi_ref_sync_steps=${REF_SYNC_STEPS}"
   "actor_rollout_ref.actor.self_distillation.teacher_regularization=ema"
   "actor_rollout_ref.actor.self_distillation.teacher_update_rate=${TEACHER_UPDATE_RATE}"
+  "actor_rollout_ref.actor.self_distillation.save_teacher_checkpoint=${SAVE_TEACHER_CHECKPOINT}"
   "actor_rollout_ref.actor.self_distillation.max_reprompt_len=${MAX_REPROMPT_LENGTH}"
+
+  "actor_rollout_ref.actor.checkpoint.save_contents=${CHECKPOINT_SAVE_CONTENTS}"
+  "actor_rollout_ref.actor.checkpoint.load_contents=${CHECKPOINT_LOAD_CONTENTS}"
 
   "actor_rollout_ref.rollout.n=${ROLLOUT_N}"
   "actor_rollout_ref.rollout.gpu_memory_utilization=${VLLM_GPU_MEMORY_UTILIZATION}"
@@ -209,6 +216,7 @@ data=${DATA_DIR}
 output=${RUN_DIR}
 gpus=${NUM_GPUS}
 steps=${TOTAL_STEPS}, epochs=${TOTAL_EPOCHS}, eval=${TEST_FREQ}, save=${SAVE_FREQ}
+checkpoint_contents=${CHECKPOINT_SAVE_CONTENTS}, save_ema_teacher=${SAVE_TEACHER_CHECKPOINT}
 alpha=${DIVERGENCE_ALPHA}, rho=${RENYI_ORDER}
 self_reference_weight=${SELF_REFERENCE_WEIGHT}, ref_sync=${REF_SYNC_STEPS}
 teacher_ema=${TEACHER_UPDATE_RATE}, lr=${LEARNING_RATE}, warmup=${WARMUP_STEPS}
