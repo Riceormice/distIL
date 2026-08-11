@@ -198,7 +198,6 @@ ARGS=(
   "trainer.nnodes=1"
   "trainer.total_training_steps=${TOTAL_STEPS}"
   "trainer.total_epochs=${TOTAL_EPOCHS}"
-  "trainer.seed=${SEED}"
   "trainer.test_freq=${TEST_FREQ}"
   "trainer.save_freq=${SAVE_FREQ}"
   "trainer.max_actor_ckpt_to_keep=${MAX_ACTOR_CKPT_TO_KEEP}"
