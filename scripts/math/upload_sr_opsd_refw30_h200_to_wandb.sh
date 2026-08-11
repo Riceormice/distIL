@@ -29,7 +29,7 @@ raise SystemExit(0 if parts >= (0, 22, 3) else 1)
   echo "ERROR: this uploader requires wandb>=0.22.3 in ${PYTHON_BIN}." >&2
   exit 4
 fi
-if [[ ! -d "${OUTPUT_ROOT}/logs" || ! -d "${OUTPUT_ROOT}/evaluations" ]]; then
+if [[ ! -d "${OUTPUT_ROOT}/evaluations" ]]; then
   echo "ERROR: H200 Math result root is incomplete: ${OUTPUT_ROOT}" >&2
   exit 5
 fi

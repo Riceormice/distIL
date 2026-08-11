@@ -75,7 +75,7 @@ def parse_args() -> argparse.Namespace:
 
 def read_training_events(path: Path) -> dict[int, dict[str, Any]]:
     if not path.is_file():
-        raise RuntimeError(f"missing training metrics: {path}")
+        return {}
     content = path.read_bytes()
     lines = content.splitlines()
     events: dict[int, dict[str, Any]] = {}
@@ -94,10 +94,6 @@ def read_training_events(path: Path) -> dict[int, dict[str, Any]]:
             raise RuntimeError(f"{path}:{line_number}: metrics is not an object")
         events.setdefault(step, {}).update(metrics)
         events[step].setdefault("training/global_step", step)
-    if not events:
-        raise RuntimeError(f"no complete training events: {path}")
-    if max(events) < 30:
-        raise RuntimeError(f"training stopped at step {max(events)} instead of 30: {path}")
     return {step: events[step] for step in sorted(events) if step <= 30}
 
 
@@ -220,12 +216,24 @@ def read_checkpoint(
 
 def build_events(
     spec: RunSpec,
-) -> tuple[dict[int, dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[
+    dict[int, dict[str, Any]],
+    list[dict[str, Any]],
+    tuple[int, ...],
+    str,
+]:
     events = read_training_events(spec.metrics_path)
     rows: list[dict[str, Any]] = []
+    completed_steps: list[int] = []
+    waiting_for = "none"
     for step in CHECKPOINT_STEPS:
-        checkpoint_metrics, headers = read_checkpoint(spec, step)
+        try:
+            checkpoint_metrics, headers = read_checkpoint(spec, step)
+        except RuntimeError as exc:
+            waiting_for = f"checkpoint-{step}: {exc}"
+            break
         events.setdefault(step, {}).update(checkpoint_metrics)
+        completed_steps.append(step)
         for header in headers:
             rows.append(
                 {
@@ -239,7 +247,9 @@ def build_events(
                     "format_pct": header["format_pct"],
                 }
             )
-    return events, rows
+    if not completed_steps:
+        raise RuntimeError(f"no complete evaluation checkpoint: {spec.eval_dir}")
+    return events, rows, tuple(completed_steps), waiting_for
 
 
 def run_id_for(spec: RunSpec) -> str:
@@ -356,7 +366,8 @@ def config_for(spec: RunSpec) -> dict[str, Any]:
         "evaluation_presence_penalty": 0,
         "evaluation_max_new_tokens": 38912,
         "evaluation_tensor_parallel_size": 8,
-        "source_metrics": str(spec.metrics_path),
+        "training_metrics_available": spec.metrics_path.is_file(),
+        "source_metrics": str(spec.metrics_path) if spec.metrics_path.is_file() else None,
         "source_evaluations": str(spec.eval_dir),
     }
 
@@ -368,25 +379,29 @@ def upload_spec(
     project: str,
     state_dir: Path,
     dry_run: bool,
-) -> None:
+) -> bool:
     print(f"VALIDATING {spec.display_name}", flush=True)
-    events, rows = build_events(spec)
+    events, rows, completed_steps, waiting_for = build_events(spec)
     summary_csv = write_summary_csv(state_dir, spec, rows)
     summary = best_summary(events)
+    latest_eval_step = max(completed_steps)
+    complete = completed_steps == CHECKPOINT_STEPS
     run_id = run_id_for(spec)
     state_path = state_path_for(state_dir, spec)
     state = load_state(state_path, run_id)
     last_step = int(state.get("last_step", 0))
-    artifact_logged = bool(state.get("artifact_logged", False))
+    artifact_step = int(state.get("artifact_step", 0))
     pending = [step for step in sorted(events) if step > last_step]
     print(
-        f"COMPLETE {spec.display_name}: train_step={max(events)}, "
-        f"eval_checkpoints={len(CHECKPOINT_STEPS)}, "
-        f"eval_json={len(rows)}, pending_events={len(pending)}",
+        f"{'COMPLETE' if complete else 'PARTIAL'} {spec.display_name}: "
+        f"latest_event_step={max(events)}, "
+        f"eval_checkpoints={len(completed_steps)}/{len(CHECKPOINT_STEPS)}, "
+        f"eval_json={len(rows)}, pending_events={len(pending)}, "
+        f"waiting_for={waiting_for}",
         flush=True,
     )
-    if dry_run or (not pending and artifact_logged):
-        return
+    if dry_run or (not pending and artifact_step >= latest_eval_step):
+        return complete
 
     import wandb
 
@@ -417,7 +432,7 @@ def upload_spec(
         raise RuntimeError(f"wandb.init returned no run for {spec.run_name}")
 
     uploaded_step = last_step
-    uploaded_artifact = artifact_logged
+    uploaded_artifact_step = artifact_step
     try:
         run.define_metric("training/global_step")
         run.define_metric("*", step_metric="training/global_step")
@@ -429,7 +444,7 @@ def upload_spec(
         for key, value in summary.items():
             run.summary[key] = value
 
-        if not artifact_logged:
+        if artifact_step < latest_eval_step:
             artifact_name = (
                 f"math-sr-opsd-refw{spec.self_reference_weight}-steps30-results"
                 .replace(".", "p")
@@ -443,12 +458,15 @@ def upload_spec(
                     "self_reference_weight": float(spec.self_reference_weight),
                     "eval_frequency": 5,
                     "evaluation_samples": 64,
+                    "latest_complete_evaluation_step": latest_eval_step,
+                    "all_evaluations_complete": complete,
                 },
             )
-            artifact.add_file(str(spec.metrics_path), name="metrics.jsonl")
+            if spec.metrics_path.is_file():
+                artifact.add_file(str(spec.metrics_path), name="metrics.jsonl")
             artifact.add_file(str(summary_csv), name="eval5_math_metrics.csv")
             run.log_artifact(artifact)
-            uploaded_artifact = True
+            uploaded_artifact_step = latest_eval_step
         run.finish(exit_code=0)
     except BaseException:
         run.finish(exit_code=1)
@@ -461,12 +479,14 @@ def upload_spec(
             "run_name": spec.run_name,
             "display_name": spec.display_name,
             "last_step": uploaded_step,
-            "artifact_logged": uploaded_artifact,
+            "artifact_step": uploaded_artifact_step,
+            "complete": complete,
             "entity": entity,
             "project": project,
         },
     )
     print(f"UPLOADED {spec.display_name}", flush=True)
+    return complete
 
 
 def main() -> None:
@@ -478,15 +498,16 @@ def main() -> None:
 
     specs = [RunSpec(args.output_root, weight) for weight in SELF_REFERENCE_WEIGHTS]
     failures = 0
+    complete_runs = 0
     for spec in specs:
         try:
-            upload_spec(
+            complete_runs += int(upload_spec(
                 spec,
                 entity=args.entity,
                 project=args.project,
                 state_dir=state_dir,
                 dry_run=args.dry_run,
-            )
+            ))
         except Exception as exc:
             failures += 1
             print(
@@ -494,14 +515,26 @@ def main() -> None:
                 flush=True,
             )
     mode = "validation" if args.dry_run else "upload"
-    print(f"{mode}: runs={len(specs)}, failures={failures}", flush=True)
-    if failures:
-        raise SystemExit(1)
+    partial_runs = len(specs) - complete_runs - failures
     print(
-        "SUCCESS: all four H200 Math self-reference-weight runs are complete"
-        + ("" if args.dry_run else " and uploaded"),
+        f"{mode}: runs={len(specs)}, complete={complete_runs}, "
+        f"partial={partial_runs}, failures={failures}",
         flush=True,
     )
+    if failures:
+        raise SystemExit(1)
+    if partial_runs:
+        print(
+            "SUCCESS: all currently complete evaluation checkpoints were "
+            + ("validated" if args.dry_run else "uploaded"),
+            flush=True,
+        )
+    else:
+        print(
+            "SUCCESS: all four H200 Math self-reference-weight runs are complete"
+            + ("" if args.dry_run else " and uploaded"),
+            flush=True,
+        )
 
 
 if __name__ == "__main__":
