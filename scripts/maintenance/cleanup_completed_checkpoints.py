@@ -176,7 +176,9 @@ def discover_evidence(root: Path, run_names: set[str]) -> dict[tuple[str, int], 
                     math_files[(run_name, step, path.parent)].add(dataset)
                 continue
 
-            if suffix == ".jsonl" and likely_evidence_dir:
+            if suffix == ".jsonl" and (
+                likely_evidence_dir or name in {"metrics.jsonl", "events.jsonl"}
+            ):
                 if step is not None and valid_jsonl(path):
                     for run_name in matching_runs:
                         generic[(run_name, step)].append(str(path))
