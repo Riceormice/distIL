@@ -11,7 +11,7 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/sr_opsd_math_protocol_c
 
 case "${PROFILE}" in
   table_aligned)
-    RUN_NAME="sr-opsd-8b-seed0-table-aligned-rho0.95-refw0.9-sync0-lr5e-6-tok16384-steps100"
+    RUN_NAME="sr-opsd-8b-seed0-table-aligned-rho0.95-refw0.9-sync0-lr5e-6-tok16384-steps30-eval5"
     TRAIN_BATCH_SIZE=8
     PPO_MINI_BATCH_SIZE=8
     ROLLOUT_N=1
@@ -29,7 +29,7 @@ case "${PROFILE}" in
     LORA_RANK=0
     ;;
   github_original)
-    RUN_NAME="sr-opsd-8b-seed0-github-original-rho0.95-refw0.9-sync0-lr5e-6-tok8192-steps100"
+    RUN_NAME="sr-opsd-8b-seed0-github-original-rho0.95-refw0.9-sync0-lr5e-6-tok8192-steps30-eval5"
     TRAIN_BATCH_SIZE=32
     PPO_MINI_BATCH_SIZE=32
     ROLLOUT_N=8
@@ -94,8 +94,9 @@ profile=${PROFILE}
 run=${RUN_NAME}
 model=${MODEL_PATH}
 output=${OUTPUT_ROOT}
-temporary_checkpoint=100 only; deleted after successful evaluation
-external_eval=AIME24,AIME25,HMMT25,AMC23,Minerva; thinking; N=64
+training_validation=steps 5,10,15,20,25,30; math_probs/test; N=1
+temporary_checkpoint=30 only; deleted after successful external evaluation
+external_final_eval=AIME24,AIME25,HMMT25,AMC23,Minerva; thinking; N=64
 train_batch=${TRAIN_BATCH_SIZE}, mini_batch=${PPO_MINI_BATCH_SIZE}, rollout_n=${ROLLOUT_N}
 response_length=${MAX_RESPONSE_LENGTH}, temperature=${ROLLOUT_TEMPERATURE}, top_p=0.95, top_k=${ROLLOUT_TOP_K}
 lr=5e-6, schedule=${LR_SCHEDULER_TYPE}, warmup=${WARMUP_STEPS}
@@ -113,8 +114,9 @@ exec env \
   MODEL_SIZE=8b \
   MODEL_PATH="${MODEL_PATH}" \
   SEED=0 \
-  TOTAL_STEPS=100 \
-  SAVE_FREQ=100 \
+  TOTAL_STEPS=30 \
+  TEST_FREQ=5 \
+  SAVE_FREQ=30 \
   SELF_REFERENCE_WEIGHT=0.9 \
   REF_SYNC_STEPS=0 \
   LEARNING_RATE=5e-6 \

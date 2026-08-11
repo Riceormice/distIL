@@ -1,12 +1,13 @@
 # SR-OPSD Mathematics Protocol Comparison
 
-Both H200 lanes train Qwen3-8B for 100 optimizer steps on the same `math_probs`
-data and run the same post-training evaluation at step 100. The temporary
-checkpoint is evaluated with thinking enabled, 64 samples per problem, and
-TP=8 on AIME24, AIME25, HMMT25, AMC23, and Minerva. After all five JSON files
-pass validation, both the training checkpoint and merged model are deleted.
-An incomplete checkpoint is retained only when evaluation fails, so the failed
-evaluation can be resumed without retraining.
+Both H200 lanes train Qwen3-8B for 30 optimizer steps on the same `math_probs`
+data. In-process validation on `math_probs/test.parquet` runs every five steps
+with one validation rollout and does not create checkpoints. Only step 30 is
+saved temporarily, then evaluated with thinking enabled, 64 samples per
+problem, and TP=8 on AIME24, AIME25, HMMT25, AMC23, and Minerva. After all five
+JSON files pass validation, both the training checkpoint and merged model are
+deleted. An incomplete checkpoint is retained only when external evaluation
+fails, so the failed evaluation can be resumed without retraining.
 
 `table_aligned` uses the Mathematics SR-OPSD settings reported in the current
 configuration table: one rollout per question, 16384 training response tokens,
