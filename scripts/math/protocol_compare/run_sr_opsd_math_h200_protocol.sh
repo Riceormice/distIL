@@ -94,7 +94,7 @@ profile=${PROFILE}
 run=${RUN_NAME}
 model=${MODEL_PATH}
 output=${OUTPUT_ROOT}
-checkpoints=20,40,60,80,100
+temporary_checkpoint=100 only; deleted after successful evaluation
 external_eval=AIME24,AIME25,HMMT25,AMC23,Minerva; thinking; N=64
 train_batch=${TRAIN_BATCH_SIZE}, mini_batch=${PPO_MINI_BATCH_SIZE}, rollout_n=${ROLLOUT_N}
 response_length=${MAX_RESPONSE_LENGTH}, temperature=${ROLLOUT_TEMPERATURE}, top_p=0.95, top_k=${ROLLOUT_TOP_K}
@@ -114,7 +114,7 @@ exec env \
   MODEL_PATH="${MODEL_PATH}" \
   SEED=0 \
   TOTAL_STEPS=100 \
-  SAVE_FREQ=20 \
+  SAVE_FREQ=100 \
   SELF_REFERENCE_WEIGHT=0.9 \
   REF_SYNC_STEPS=0 \
   LEARNING_RATE=5e-6 \

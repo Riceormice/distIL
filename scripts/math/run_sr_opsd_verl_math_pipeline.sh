@@ -58,6 +58,12 @@ for ((step=SAVE_FREQ; step<=TOTAL_STEPS; step+=SAVE_FREQ)); do
   done
   if [[ "${complete}" == "1" ]]; then
     echo "SKIP checkpoint-${step}: all five JSON files are complete"
+    if [[ "${KEEP_MERGED_MODELS}" == "0" ]]; then
+      rm -rf "${merged_dir}"
+    fi
+    if [[ "${KEEP_TRAINING_CHECKPOINTS}" == "0" ]]; then
+      rm -rf "${RUN_DIR}/global_step_${step}"
+    fi
     continue
   fi
 
