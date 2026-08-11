@@ -393,6 +393,11 @@ def upload_source(
         ) from exc
 
     run_id = run_id_for(project, source)
+    print(
+        f"CONNECTING {source.display_name} to W&B "
+        f"({entity}/{project}, id={run_id})",
+        flush=True,
+    )
     run = wandb.init(
         entity=entity,
         project=project,
@@ -411,6 +416,7 @@ def upload_source(
             "seed-0",
         ],
         config=config_for(source),
+        settings=wandb.Settings(init_timeout=120),
     )
     if run is None:
         raise RuntimeError(f"wandb.init returned no run for {source.run_name}")
@@ -418,18 +424,30 @@ def upload_source(
     uploaded_step = last_step
     uploaded_artifact = artifact_logged
     try:
+        print(f"CONNECTED {source.display_name}: {run.url}", flush=True)
         run.define_metric("training/global_step")
         run.define_metric("*", step_metric="training/global_step")
-        for step in pending:
+        for index, step in enumerate(pending, start=1):
             payload = add_readable_aliases(events[step])
             payload["training/global_step"] = step
             run.log(payload, step=step)
             uploaded_step = step
+            if index == 1 or index % 50 == 0 or index == len(pending):
+                print(
+                    f"UPLOADING {source.display_name}: "
+                    f"event {index}/{len(pending)}, step={step}",
+                    flush=True,
+                )
 
         for key, value in summary.items():
             run.summary[key] = value
 
         if not artifact_logged:
+            print(
+                f"ARTIFACT {source.display_name}: attaching metrics.jsonl "
+                "and eval5_metrics.csv",
+                flush=True,
+            )
             artifact_name = (
                 f"physics-grid-selfref{source.self_reference}-rho{source.rho}"
                 .replace(".", "p")
@@ -449,6 +467,7 @@ def upload_source(
             artifact.add_file(str(source.metrics_path), name="metrics.jsonl")
             run.log_artifact(artifact)
             uploaded_artifact = True
+        print(f"SYNCING {source.display_name} with W&B", flush=True)
         run.finish(exit_code=0)
     except BaseException:
         run.finish(exit_code=1)
@@ -465,6 +484,11 @@ def upload_source(
             "run_name": source.display_name,
             "source_run_name": source.run_name,
         },
+    )
+    print(
+        f"UPLOADED {source.display_name}: step={uploaded_step}, "
+        f"artifact={uploaded_artifact}",
+        flush=True,
     )
 
 
@@ -487,6 +511,11 @@ def main() -> None:
         )
         errors: list[str] = []
         for source in ordered:
+            print(
+                f"VALIDATING selfref={key[0]} rho={key[1]} "
+                f"source={source.run_name}",
+                flush=True,
+            )
             try:
                 events, eval_csv = validate_source(
                     source,
