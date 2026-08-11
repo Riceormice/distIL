@@ -6,7 +6,7 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/sdpo_physics_rho_selfre
 ENTITY="${WANDB_ENTITY:-wenxuan-yuan-imperial-college-london}"
 PROJECT="${WANDB_PROJECT:-sdpo_ablation_physics}"
 WANDB_UPLOAD_ENV="${WANDB_UPLOAD_ENV:-/media/damoxing/che-liu-fileset/ylong/sdpo/envs/wandb-upload}"
-WANDB_VERSION="${WANDB_VERSION:-0.17.9}"
+WANDB_VERSION="${WANDB_VERSION:-0.22.3}"
 WANDB_PIP_TIMEOUT="${WANDB_PIP_TIMEOUT:-300}"
 WANDB_PIP_RETRIES="${WANDB_PIP_RETRIES:-10}"
 WANDB_ENV_FILE="${WANDB_ENV_FILE:-/root/.config/wandb/upload.env}"
@@ -26,7 +26,21 @@ find_python_with_wandb() {
     /media/vlm-ckp-fileset/ylong/sdpo/envs/opsd-math/bin/python \
     "$(command -v python3 2>/dev/null || true)"; do
     [[ -n "${candidate}" && -x "${candidate}" ]] || continue
-    if "${candidate}" -c 'import wandb' >/dev/null 2>&1; then
+    if WANDB_REQUIRED_VERSION="${WANDB_VERSION}" "${candidate}" -c '
+import os
+import re
+from importlib.metadata import version
+
+def numeric(value):
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", value)
+    if match is None:
+        raise SystemExit(1)
+    return tuple(int(part) for part in match.groups())
+
+raise SystemExit(
+    0 if numeric(version("wandb")) >= numeric(os.environ["WANDB_REQUIRED_VERSION"]) else 1
+)
+' >/dev/null 2>&1; then
       printf '%s\n' "${candidate}"
       return 0
     fi
