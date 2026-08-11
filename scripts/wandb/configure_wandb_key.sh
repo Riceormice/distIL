@@ -25,8 +25,13 @@ fi
 
 key="${key//$'\r'/}"
 key="${key//$'\n'/}"
-if [[ ${#key} -lt 20 || "${key}" == *[[:space:]]* ]]; then
-  echo "ERROR: the supplied W&B API key is empty or malformed." >&2
+if [[ ${#key} -eq 37 ]]; then
+  echo "ERROR: the supplied 37-character value is a W&B Key ID, not the full secret." >&2
+  echo "Create a new API key and copy the one-time secret from the creation dialog." >&2
+  exit 3
+fi
+if [[ ${#key} -lt 40 || "${key}" == *[[:space:]]* ]]; then
+  echo "ERROR: the supplied W&B API key is incomplete or malformed." >&2
   exit 3
 fi
 
