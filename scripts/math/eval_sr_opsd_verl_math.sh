@@ -8,6 +8,7 @@ OUTPUT_DIR="${OUTPUT_DIR:?Set OUTPUT_DIR for the five evaluation JSON files}"
 MODEL_SIZE="${MODEL_SIZE:-8b}"
 VAL_N="${VAL_N:-64}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-8}"
+LORA_ADAPTER_DIR="${LORA_ADAPTER_DIR:-}"
 DATASETS=(aime24 aime25 hmmt25 amc23 minerva)
 
 case "${MODEL_SIZE}" in
@@ -47,7 +48,8 @@ for dataset in "${DATASETS[@]}"; do
 done
 
 if (( ${#missing[@]} > 0 )); then
-  "${PYTHON_BIN}" "${REPO_ROOT}/OPSD/eval/evaluate_math.py" \
+  eval_args=(
+    "${PYTHON_BIN}" "${REPO_ROOT}/OPSD/eval/evaluate_math.py"
     --base_model "${MODEL_DIR}" \
     --datasets "${missing[@]}" \
     --output_dir "${OUTPUT_DIR}" \
@@ -62,6 +64,12 @@ if (( ${#missing[@]} > 0 )); then
     --max_model_len 40960 \
     --gpu_memory_utilization "${EVAL_GPU_MEMORY_UTILIZATION:-0.90}" \
     --tensor_parallel_size "${TENSOR_PARALLEL_SIZE}"
+  )
+  if [[ -n "${LORA_ADAPTER_DIR}" ]]; then
+    test -s "${LORA_ADAPTER_DIR}/adapter_config.json"
+    eval_args+=(--checkpoint_dir "${LORA_ADAPTER_DIR}")
+  fi
+  "${eval_args[@]}"
 fi
 
 for dataset in "${DATASETS[@]}"; do
