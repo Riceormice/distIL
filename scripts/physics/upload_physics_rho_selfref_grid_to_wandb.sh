@@ -9,6 +9,12 @@ WANDB_UPLOAD_ENV="${WANDB_UPLOAD_ENV:-/media/damoxing/che-liu-fileset/ylong/sdpo
 WANDB_VERSION="${WANDB_VERSION:-0.17.9}"
 WANDB_PIP_TIMEOUT="${WANDB_PIP_TIMEOUT:-300}"
 WANDB_PIP_RETRIES="${WANDB_PIP_RETRIES:-10}"
+WANDB_ENV_FILE="${WANDB_ENV_FILE:-/root/.config/wandb/upload.env}"
+
+if [[ -z "${WANDB_API_KEY:-}" && -r "${WANDB_ENV_FILE}" ]]; then
+  # The file is created with mode 600 by configure_wandb_key.sh.
+  source "${WANDB_ENV_FILE}"
+fi
 
 find_python_with_wandb() {
   local candidate
