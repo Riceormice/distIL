@@ -6,7 +6,9 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/sdpo_physics_rho_selfre
 ENTITY="${WANDB_ENTITY:-wenxuan-yuan-imperial-college-london}"
 PROJECT="${WANDB_PROJECT:-sdpo_ablation_physics}"
 WANDB_UPLOAD_ENV="${WANDB_UPLOAD_ENV:-/media/damoxing/che-liu-fileset/ylong/sdpo/envs/wandb-upload}"
-WANDB_PIP_INDEX_URL="${WANDB_PIP_INDEX_URL:-https://pypi.org/simple}"
+WANDB_VERSION="${WANDB_VERSION:-0.17.9}"
+WANDB_PIP_TIMEOUT="${WANDB_PIP_TIMEOUT:-300}"
+WANDB_PIP_RETRIES="${WANDB_PIP_RETRIES:-10}"
 
 find_python_with_wandb() {
   local candidate
@@ -29,6 +31,8 @@ find_python_with_wandb() {
 bootstrap_wandb_environment() {
   local base_python=""
   local candidate
+  local index_url
+  local -a index_urls
 
   for candidate in \
     /media/damoxing/che-liu-fileset/conda/bin/python \
@@ -54,13 +58,32 @@ bootstrap_wandb_environment() {
     "${base_python}" -m venv "${WANDB_UPLOAD_ENV}" >&2
   fi
 
-  "${WANDB_UPLOAD_ENV}/bin/python" -m pip install \
-    --disable-pip-version-check \
-    --index-url "${WANDB_PIP_INDEX_URL}" \
-    'wandb>=0.17' >&2
+  if [[ -n "${WANDB_PIP_INDEX_URL:-}" ]]; then
+    index_urls=("${WANDB_PIP_INDEX_URL}")
+  else
+    index_urls=(
+      https://pypi.tuna.tsinghua.edu.cn/simple
+      https://mirrors.aliyun.com/pypi/simple
+      https://pypi.org/simple
+    )
+  fi
+
+  for index_url in "${index_urls[@]}"; do
+    echo "Installing wandb==${WANDB_VERSION} from ${index_url}" >&2
+    if "${WANDB_UPLOAD_ENV}/bin/python" -m pip install \
+      --disable-pip-version-check \
+      --prefer-binary \
+      --retries "${WANDB_PIP_RETRIES}" \
+      --timeout "${WANDB_PIP_TIMEOUT}" \
+      --index-url "${index_url}" \
+      "wandb==${WANDB_VERSION}" >&2; then
+      break
+    fi
+    echo "WARNING: installation from ${index_url} failed; trying the next index." >&2
+  done
 
   if ! "${WANDB_UPLOAD_ENV}/bin/python" -c 'import wandb' >/dev/null 2>&1; then
-    echo "ERROR: wandb installation completed but import still fails." >&2
+    echo "ERROR: wandb installation failed on every configured package index." >&2
     return 1
   fi
   printf '%s\n' "${WANDB_UPLOAD_ENV}/bin/python"
