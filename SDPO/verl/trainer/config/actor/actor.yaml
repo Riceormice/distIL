@@ -139,6 +139,9 @@ self_distillation:
   # IS clip for loss; null disables IS weighting
   is_clip: 2
 
+  # Maximum per-token distillation loss; null disables clipping
+  token_loss_clip: null
+
   # Reprompting template - available variables: prompt, successful_previous_attempt, feedback
   reprompt_template: |-
     {prompt}{solution}{feedback}

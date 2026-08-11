@@ -17,6 +17,7 @@ def native_config(**overrides):
         "alpha": 0.25,
         "rho": 0.95,
         "is_clip": None,
+        "token_loss_clip": None,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -68,8 +69,28 @@ def test_native_sr_opsd_requires_reference_logits():
         )
 
 
+def test_native_sr_opsd_clips_per_token_loss():
+    student = torch.log_softmax(torch.tensor([[[0.2, 1.0, -0.1]]]), dim=-1)
+    teacher = torch.log_softmax(torch.tensor([[[2.0, 0.5, -0.5]]]), dim=-1)
+    reference = torch.log_softmax(torch.tensor([[[0.3, 0.2, 1.0]]]), dim=-1)
+
+    loss, _ = compute_self_distillation_loss(
+        student_log_probs=torch.zeros((1, 1)),
+        teacher_log_probs=torch.zeros((1, 1)),
+        response_mask=torch.ones((1, 1)),
+        self_distillation_config=native_config(token_loss_clip=0.05),
+        student_all_log_probs=student,
+        teacher_all_log_probs=teacher,
+        ref_all_log_probs=reference,
+    )
+
+    torch.testing.assert_close(loss, torch.tensor(0.05))
+
+
 def test_native_config_rejects_invalid_renyi_parameters():
     with pytest.raises(ValueError, match="different from 1"):
         SelfDistillationConfig(alpha=0.25, rho=1.0)
     with pytest.raises(ValueError, match=r"must be in \[0,1\]"):
         SelfDistillationConfig(renyi_regularization=True, renyi_regularization_level=1.1)
+    with pytest.raises(ValueError, match="token_loss_clip must be positive"):
+        SelfDistillationConfig(token_loss_clip=0.0)

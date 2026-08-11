@@ -13,18 +13,21 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/sr_opsd_math_native}"
 
 SEED="${SEED:-0}"
 NUM_GPUS="${NUM_GPUS:-${N_GPUS_PER_NODE:-8}}"
-TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-32}"
-PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-32}"
-ROLLOUT_N="${ROLLOUT_N:-8}"
+TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-8}"
+PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-8}"
+ROLLOUT_N="${ROLLOUT_N:-1}"
 TOTAL_STEPS="${TOTAL_STEPS:-100}"
 TOTAL_EPOCHS="${TOTAL_EPOCHS:-15}"
 TEST_FREQ="${TEST_FREQ:-100}"
 SAVE_FREQ="${SAVE_FREQ:-100}"
 
 LEARNING_RATE="${LEARNING_RATE:-5e-6}"
-WARMUP_STEPS="${WARMUP_STEPS:-10}"
+WARMUP_STEPS="${WARMUP_STEPS:-0}"
+LR_SCHEDULER_TYPE="${LR_SCHEDULER_TYPE:-linear}"
+WEIGHT_DECAY="${WEIGHT_DECAY:-0}"
+GRAD_CLIP="${GRAD_CLIP:-0.1}"
 ENTROPY_COEFF="${ENTROPY_COEFF:-1e-5}"
-TEACHER_UPDATE_RATE="${TEACHER_UPDATE_RATE:-0.01}"
+TEACHER_UPDATE_RATE="${TEACHER_UPDATE_RATE:-0.05}"
 
 # The native SDPO implementation uses alpha=0.25 to select Forward Renyi.
 DIVERGENCE_ALPHA="${DIVERGENCE_ALPHA:-0.25}"
@@ -33,16 +36,21 @@ SELF_REFERENCE_WEIGHT="${SELF_REFERENCE_WEIGHT:-0.9}"
 REF_SYNC_STEPS="${REF_SYNC_STEPS:-0}"
 
 MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-2048}"
-MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-8192}"
+MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-16384}"
 MAX_REPROMPT_LENGTH="${MAX_REPROMPT_LENGTH:-16384}"
-ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-0.8}"
+ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-0.7}"
 ROLLOUT_TOP_P="${ROLLOUT_TOP_P:-0.95}"
-ROLLOUT_TOP_K="${ROLLOUT_TOP_K:--1}"
+ROLLOUT_TOP_K="${ROLLOUT_TOP_K:-20}"
 VAL_ROLLOUT_N="${VAL_ROLLOUT_N:-1}"
 VAL_TEMPERATURE="${VAL_TEMPERATURE:-0.7}"
 VAL_TOP_P="${VAL_TOP_P:-0.95}"
-VAL_TOP_K="${VAL_TOP_K:--1}"
+VAL_TOP_K="${VAL_TOP_K:-20}"
 VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.55}"
+
+DISTILLATION_TOPK="${DISTILLATION_TOPK:-100}"
+DISTILLATION_ADD_TAIL="${DISTILLATION_ADD_TAIL:-False}"
+DISTILLATION_IS_CLIP="${DISTILLATION_IS_CLIP:-null}"
+TOKEN_LOSS_CLIP="${TOKEN_LOSS_CLIP:-0.05}"
 
 LORA_RANK="${LORA_RANK:-64}"
 LORA_ALPHA="${LORA_ALPHA:-128}"
@@ -137,13 +145,17 @@ ARGS=(
   "actor_rollout_ref.actor.calculate_entropy=True"
   "actor_rollout_ref.actor.entropy_coeff=${ENTROPY_COEFF}"
   "actor_rollout_ref.actor.optim.lr=${LEARNING_RATE}"
-  "actor_rollout_ref.actor.optim.lr_scheduler_type=constant"
+  "actor_rollout_ref.actor.optim.lr_scheduler_type=${LR_SCHEDULER_TYPE}"
   "actor_rollout_ref.actor.optim.lr_warmup_steps=${WARMUP_STEPS}"
+  "actor_rollout_ref.actor.optim.weight_decay=${WEIGHT_DECAY}"
+  "actor_rollout_ref.actor.grad_clip=${GRAD_CLIP}"
   "actor_rollout_ref.actor.policy_loss.loss_mode=sdpo"
 
   "actor_rollout_ref.actor.self_distillation.full_logit_distillation=True"
-  "actor_rollout_ref.actor.self_distillation.distillation_topk=100"
-  "actor_rollout_ref.actor.self_distillation.distillation_add_tail=True"
+  "actor_rollout_ref.actor.self_distillation.distillation_topk=${DISTILLATION_TOPK}"
+  "actor_rollout_ref.actor.self_distillation.distillation_add_tail=${DISTILLATION_ADD_TAIL}"
+  "actor_rollout_ref.actor.self_distillation.is_clip=${DISTILLATION_IS_CLIP}"
+  "actor_rollout_ref.actor.self_distillation.token_loss_clip=${TOKEN_LOSS_CLIP}"
   "actor_rollout_ref.actor.self_distillation.dont_reprompt_on_self_success=True"
   "actor_rollout_ref.actor.self_distillation.alpha=${DIVERGENCE_ALPHA}"
   "actor_rollout_ref.actor.self_distillation.rho=${RENYI_ORDER}"
@@ -199,6 +211,8 @@ steps=${TOTAL_STEPS}, epochs=${TOTAL_EPOCHS}, eval=${TEST_FREQ}, save=${SAVE_FRE
 alpha=${DIVERGENCE_ALPHA}, rho=${RENYI_ORDER}
 self_reference_weight=${SELF_REFERENCE_WEIGHT}, ref_sync=${REF_SYNC_STEPS}
 teacher_ema=${TEACHER_UPDATE_RATE}, lr=${LEARNING_RATE}, warmup=${WARMUP_STEPS}
+schedule=${LR_SCHEDULER_TYPE}, weight_decay=${WEIGHT_DECAY}, grad_clip=${GRAD_CLIP}
+topk=${DISTILLATION_TOPK}, tail=${DISTILLATION_ADD_TAIL}, is_clip=${DISTILLATION_IS_CLIP}, token_clip=${TOKEN_LOSS_CLIP}
 ============================================================
 EOF
 

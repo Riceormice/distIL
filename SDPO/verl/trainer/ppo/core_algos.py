@@ -1222,6 +1222,10 @@ def compute_self_distillation_loss(
         log_ratio = student_log_probs - teacher_log_probs
         per_token_loss = log_ratio.detach() * student_log_probs
 
+    token_loss_clip = getattr(self_distillation_config, "token_loss_clip", None)
+    if token_loss_clip is not None:
+        per_token_loss = per_token_loss.clamp(max=token_loss_clip)
+
     is_clip = self_distillation_config.is_clip
     if is_clip is not None:
         if old_log_probs is None:
