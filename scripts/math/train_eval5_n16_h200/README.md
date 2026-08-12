@@ -11,3 +11,6 @@ been written successfully. The previous checkpoint is then deleted. After the
 step-100 JSON files pass completeness validation, the final checkpoint is also
 deleted. W&B and SwanLab are disabled; training logs and evaluation JSON files
 remain under `/media/vlm-ckp-fileset/ylong/math_train_eval5_n16_h200_20260812`.
+
+Use `launch_h200_machine.sh 1`, `2`, `3`, or `4` for GRPO, SDPO, OPSD, or
+SR-OPSD, respectively.
