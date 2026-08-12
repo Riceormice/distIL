@@ -16,14 +16,14 @@ VAL_N=16
 SAVE_STEPS="$(seq -s, 5 5 100)"
 SEED=0
 LR=5e-6
-GRADIENT_ACCUMULATION_STEPS=2
+GRADIENT_ACCUMULATION_STEPS=8
 ROLLOUT_TEMPERATURE=0.7
 TOP_P=0.95
 TOP_K=20
 MAX_COMPLETION_LENGTH=16384
 MAIN_PROCESS_PORT="${MAIN_PROCESS_PORT:-29610}"
 
-RUN_NAME="opsd-8b-seed0-lr5e-6-bs1-ga2-steps100-sched420-beta0-clip0.06-topk100-temp0.7-tok16384-eval5-n16-h200"
+RUN_NAME="opsd-8b-seed0-lr5e-6-bs1-ga8-steps100-sched420-beta0-clip0.06-topk100-temp0.7-tok16384-eval5-n16-h200"
 LOSS_MODE=jsd
 BETA=0
 JSD_TOKEN_CLIP=0.06
@@ -45,6 +45,24 @@ exec > >(tee -a "${LAUNCH_LOG}") 2>&1
 
 export SDPO_METRICS_JSONL="${METRICS_JSONL}"
 export SWANLAB_RUN_ID_FILE="${STATE_ROOT}/disabled_swanlab_run_id.txt"
+
+cat >"${STATE_ROOT}/parameters.env" <<EOF
+method=opsd
+framework=distIL-TRL
+model=${BASE_MODEL_DIR}
+seed=${SEED}
+num_gpus=8
+per_device_batch_size=1
+gradient_accumulation_steps=${GRADIENT_ACCUMULATION_STEPS}
+rollouts_per_question=1
+training_trajectories_per_optimizer_step=64
+learning_rate=${LR}
+lr_scheduler=linear
+warmup_steps=0
+max_response_length=${MAX_COMPLETION_LENGTH}
+evaluation_frequency=5
+evaluation_samples_per_question=${VAL_N}
+EOF
 
 checkpoint_dir() {
   printf '%s/checkpoint-%s' "${TRAIN_OUTPUT_DIR}" "$1"

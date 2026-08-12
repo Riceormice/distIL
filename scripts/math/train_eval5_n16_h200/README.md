@@ -24,7 +24,9 @@ and token-level rollout correction. Method-specific settings are:
   no tail bucket, token-loss clip 0.05, and no reference anchoring.
 - SR-OPSD: Forward Renyi with rho 0.95, self-reference weight 0.9, frozen
   initial reference (sync 0), plus the same EMA/top-k/clip settings as SDPO.
-- OPSD: unchanged dedicated implementation.
+- OPSD: dedicated implementation with one completion per training example,
+  per-device batch 1, and gradient accumulation 8. This gives 64 generated
+  training trajectories per optimizer step, matching the three VERL lanes.
 
 Use `launch_h200_machine.sh 1`, `2`, `3`, or `4` for GRPO, SDPO, OPSD, or
 SR-OPSD, respectively.

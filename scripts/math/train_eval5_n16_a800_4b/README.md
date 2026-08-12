@@ -10,7 +10,8 @@ Shared training settings are Qwen3-4B, seed 0, learning rate
 temperature/top-p/top-k 0.7/0.95/20, and LoRA rank 64. The three native VERL
 lanes use eight rollouts and train/mini-batch sizes 8/8. OPSD uses its dedicated
 distIL runner with one completion per training example, per-device batch 1,
-and gradient accumulation 1.
+and gradient accumulation 8. Both paths therefore process 64 generated
+training trajectories per optimizer step.
 
 Method-specific objectives are GRPO with epsilon 0.2; SDPO reverse KL with an
 EMA teacher; OPSD with beta 0; and SR-OPSD Forward Renyi with rho 0.95,
