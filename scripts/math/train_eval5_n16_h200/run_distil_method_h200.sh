@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-METHOD="${1:?Usage: $0 grpo|sdpo|opsd}"
+METHOD="${1:?Usage: $0 opsd}"
 case "${METHOD}" in
-  grpo|sdpo|opsd) ;;
-  *) echo "ERROR: METHOD must be grpo, sdpo, or opsd" >&2; exit 2 ;;
+  opsd) ;;
+  *) echo "ERROR: this runner is reserved for OPSD; GRPO and SDPO use run_verl_method_h200.sh" >&2; exit 2 ;;
 esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,26 +23,11 @@ TOP_K=20
 MAX_COMPLETION_LENGTH=16384
 MAIN_PROCESS_PORT="${MAIN_PROCESS_PORT:-29610}"
 
-case "${METHOD}" in
-  grpo)
-    RUN_NAME="grpo-8b-seed0-lr5e-6-bs1-ga2-steps100-sched420-gen8-eps0.2-temp0.7-tok16384-eval5-n16-h200"
-    VLLM_GPU_MEMORY_UTILIZATION=0.50
-    ;;
-  sdpo)
-    RUN_NAME="sdpo-8b-seed0-lr5e-6-bs1-ga2-steps100-sched420-beta1-clip0.06-topk100-temp0.7-tok16384-eval5-n16-h200"
-    LOSS_MODE=sdpo
-    BETA=1
-    JSD_TOKEN_CLIP=0.06
-    VLLM_GPU_MEMORY_UTILIZATION=0.42
-    ;;
-  opsd)
-    RUN_NAME="opsd-8b-seed0-lr5e-6-bs1-ga2-steps100-sched420-beta0-clip0.06-topk100-temp0.7-tok16384-eval5-n16-h200"
-    LOSS_MODE=jsd
-    BETA=0
-    JSD_TOKEN_CLIP=0.06
-    VLLM_GPU_MEMORY_UTILIZATION=0.42
-    ;;
-esac
+RUN_NAME="opsd-8b-seed0-lr5e-6-bs1-ga2-steps100-sched420-beta0-clip0.06-topk100-temp0.7-tok16384-eval5-n16-h200"
+LOSS_MODE=jsd
+BETA=0
+JSD_TOKEN_CLIP=0.06
+VLLM_GPU_MEMORY_UTILIZATION=0.42
 
 RUN_ROOT="${OUTPUT_ROOT}/${METHOD}/${RUN_NAME}"
 CHECKPOINT_ROOT="${RUN_ROOT}/checkpoints"
@@ -108,61 +93,7 @@ launch_phase() {
     --main_process_port "${port}"
   )
 
-  if [[ "${METHOD}" == "grpo" ]]; then
-    command+=(
-      "${BASELINE_OPSD}/grpo_train.py"
-      --model_name_or_path "${BASE_MODEL_DIR}"
-      --dataset_name "${MATH_TRAIN_DATA}"
-      --learning_rate "${LR}"
-      --max_grad_norm 0.1
-      --per_device_train_batch_size 1
-      --gradient_checkpointing
-      --gradient_accumulation_steps "${GRADIENT_ACCUMULATION_STEPS}"
-      --output_dir "${CHECKPOINT_ROOT}"
-      --run_config "${RUN_NAME}"
-      --num_train_epochs 10
-      --max_steps "${SCHEDULER_HORIZON_STEPS}"
-      --save_strategy no
-      --save_steps 100
-      --selected_checkpoint_steps "${SAVE_STEPS}"
-      --stop_after_step "${stop_after_step}"
-      --logging_steps 1
-      --eval_strategy no
-      --max_completion_length "${MAX_COMPLETION_LENGTH}"
-      --attn_implementation flash_attention_2
-      --torch_dtype bfloat16
-      --num_generations 8
-      --num_iterations 1
-      --beta 0
-      --epsilon 0.2
-      --epsilon_high 0.2
-      --loss_type dapo
-      --scale_rewards group
-      --importance_sampling_level token
-      --mask_truncated_completions false
-      --top_entropy_quantile 1.0
-      --sync_ref_model false
-      --use_vllm
-      --vllm_mode colocate
-      --vllm_importance_sampling_correction true
-      --vllm_importance_sampling_mode token_mask
-      --vllm_importance_sampling_cap 3.0
-      --vllm_gpu_memory_utilization "${VLLM_GPU_MEMORY_UTILIZATION}"
-      --vllm_tensor_parallel_size 1
-      --use_peft
-      --lora_r 64
-      --lora_alpha 128
-      --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj
-      --temperature "${ROLLOUT_TEMPERATURE}"
-      --top_p "${TOP_P}"
-      --top_k "${TOP_K}"
-      --seed "${SEED}"
-      --data_seed "${SEED}"
-      --wandb_project local-only
-      --report_to none
-    )
-  else
-    command+=(
+  command+=(
       "${BASELINE_OPSD}/opsd_train.py"
       --model_name_or_path "${BASE_MODEL_DIR}"
       --dataset_name "${MATH_TRAIN_DATA}"
@@ -205,8 +136,7 @@ launch_phase() {
       --data_seed "${SEED}"
       --wandb_project local-only
       --report_to none
-    )
-  fi
+  )
 
   echo "Starting ${METHOD} training phase through step ${stop_after_step}"
   set +e

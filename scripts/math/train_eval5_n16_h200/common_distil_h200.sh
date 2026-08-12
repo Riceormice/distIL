@@ -42,7 +42,6 @@ require_executable "${ENV_DIR}/bin/python"
 require_executable "${ENV_DIR}/bin/accelerate"
 require_file "${BASELINE_OPSD}/accelerate.yaml"
 require_file "${BASELINE_OPSD}/opsd_train.py"
-require_file "${BASELINE_OPSD}/grpo_train.py"
 require_file "${REPO}/scripts/math/eval_sr_opsd_verl_math.sh"
 require_file "${REPO}/scripts/math/validate_math_eval.py"
 require_file "${REPO}/OPSD/eval/evaluate_math.py"
@@ -93,7 +92,7 @@ unset WANDB_API_KEY WANDB_ENTITY WANDB_PROJECT
 unset PYTORCH_CUDA_ALLOC_CONF PYTORCH_ALLOC_CONF
 mkdir -p "${TORCH_EXTENSIONS_DIR}" "${HOME}/.triton/autotune"
 
-for script in "${BASELINE_OPSD}/opsd_train.py" "${BASELINE_OPSD}/grpo_train.py"; do
+for script in "${BASELINE_OPSD}/opsd_train.py"; do
   grep -q "selected_checkpoint_steps" "${script}" || {
     echo "ERROR: baseline runner lacks selected_checkpoint_steps: ${script}" >&2
     exit 2
