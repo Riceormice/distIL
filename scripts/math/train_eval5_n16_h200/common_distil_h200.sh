@@ -10,6 +10,9 @@ PYTHON_EXTRAS="${PYTHON_EXTRAS:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets
 PYTHON_COMPLETE="${PYTHON_COMPLETE:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets/math-python-complete-v2}"
 VLLM_COMPLETE="${VLLM_COMPLETE:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets/math-vllm-python-complete-v1}"
 TORCH_SHM_MANAGER_ASSET="${TORCH_SHM_MANAGER_ASSET:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets/torch2.8/torch_shm_manager.compat}"
+TORCH_HEADER_ROOT="${TORCH_HEADER_ROOT:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets/torch-2.8.0-headers-v1/torch/include}"
+TORCH_CXX_HEADER_ROOT="${TORCH_CXX_HEADER_ROOT:-${TORCH_HEADER_ROOT}/torch/csrc/api/include}"
+TORCH_EXTENSIONS_DIR="${TORCH_EXTENSIONS_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_extensions/math-torch2.8-cu128-h200-v1}"
 FLASH_SOURCE="${FLASH_SOURCE:-/media/vlm-ckp-fileset/ylong/sdpo/build/flash-attn-sm90/src}"
 CONDA_ROOT="${CONDA_ROOT:-/media/damoxing/che-liu-fileset/conda}"
 SITE_PACKAGES="${ENV_DIR}/lib/python3.11/site-packages"
@@ -23,6 +26,7 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/math_train_eval5_n16_h2
 
 export ROOT REPO BASELINE_REPO BASELINE_OPSD ENV_DIR CORE_RUNTIME
 export PYTHON_EXTRAS PYTHON_COMPLETE VLLM_COMPLETE TORCH_SHM_MANAGER_ASSET
+export TORCH_HEADER_ROOT TORCH_CXX_HEADER_ROOT TORCH_EXTENSIONS_DIR
 export FLASH_SOURCE CONDA_ROOT SITE_PACKAGES RUNTIME_OVERLAY FLASH_PACKAGE_OVERLAY
 export BASE_MODEL_DIR MATH_TRAIN_DATA MATH_EVAL_DATA_ROOT OUTPUT_ROOT
 
@@ -46,6 +50,8 @@ require_file "${BASE_MODEL_DIR}/config.json"
 require_file "${MATH_TRAIN_DATA}"
 require_file "${CORE_RUNTIME}/ray/dag/compiled_dag_node.py"
 require_file "${TORCH_SHM_MANAGER_ASSET}"
+require_file "${TORCH_HEADER_ROOT}/torch/extension.h"
+require_file "${TORCH_CXX_HEADER_ROOT}/torch/all.h"
 require_file "${FLASH_SOURCE}/flash_attn/__init__.py"
 require_file "${SITE_PACKAGES}/flash_attn_2_cuda.cpython-311-x86_64-linux-gnu.so"
 require_file "${PYTHON_COMPLETE}/.complete"
@@ -73,6 +79,9 @@ export VLLM_DISABLE_CUSTOM_ALL_REDUCE=1
 export NCCL_CUMEM_ENABLE=0
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export TORCH_CUDA_ARCH_LIST=9.0
+export MAX_JOBS="${MAX_JOBS:-2}"
+export CPLUS_INCLUDE_PATH="${TORCH_HEADER_ROOT}:${TORCH_CXX_HEADER_ROOT}${CPLUS_INCLUDE_PATH:+:${CPLUS_INCLUDE_PATH}}"
+export CPATH="${TORCH_HEADER_ROOT}:${TORCH_CXX_HEADER_ROOT}${CPATH:+:${CPATH}}"
 export SDPO_LOCAL_ONLY=1
 export SWANLAB_MODE=offline
 export SDPO_SWANLAB_MODE=offline
@@ -82,6 +91,18 @@ export WANDB_MODE=offline
 unset SWANLAB_API_KEY SWANLAB_WORKSPACE SWANLAB_PROJECT
 unset WANDB_API_KEY WANDB_ENTITY WANDB_PROJECT
 unset PYTORCH_CUDA_ALLOC_CONF PYTORCH_ALLOC_CONF
+mkdir -p "${TORCH_EXTENSIONS_DIR}" "${HOME}/.triton/autotune"
+
+for script in "${BASELINE_OPSD}/opsd_train.py" "${BASELINE_OPSD}/grpo_train.py"; do
+  grep -q "selected_checkpoint_steps" "${script}" || {
+    echo "ERROR: baseline runner lacks selected_checkpoint_steps: ${script}" >&2
+    exit 2
+  }
+  grep -q "stop_after_step" "${script}" || {
+    echo "ERROR: baseline runner lacks stop_after_step: ${script}" >&2
+    exit 2
+  }
+done
 
 repair_torch_shm_manager() {
   local target="${CORE_RUNTIME}/torch/bin/torch_shm_manager"
@@ -100,6 +121,39 @@ distil_pythonpath() {
 
 eval_pythonpath() {
   printf '%s' "${FLASH_PACKAGE_OVERLAY}:${REPO}/OPSD:${REPO}:${PYTHON_EXTRAS}:${VLLM_COMPLETE}:${PYTHON_COMPLETE}:${CORE_RUNTIME}:${SITE_PACKAGES}"
+}
+
+ensure_deepspeed_cpu_adam() {
+  local lock_file="${TORCH_EXTENSIONS_DIR}/.cpu_adam.lock"
+  command -v flock >/dev/null 2>&1 || {
+    echo "ERROR: flock is required for the DeepSpeed CPUAdam prebuild" >&2
+    return 1
+  }
+
+  echo "============================================================"
+  echo "DeepSpeed CPUAdam preflight"
+  echo "torch_headers=${TORCH_HEADER_ROOT}"
+  echo "torch_extensions=${TORCH_EXTENSIONS_DIR}"
+  echo "max_jobs=${MAX_JOBS}"
+  echo "============================================================"
+  (
+    flock -x 9
+    PYTHONPATH="$(distil_pythonpath)" "${ENV_DIR}/bin/python" - <<'PY'
+from pathlib import Path
+
+import torch
+from deepspeed.ops.op_builder import CPUAdamBuilder
+
+module = CPUAdamBuilder().load(verbose=True)
+module_path = Path(module.__file__).resolve()
+assert module_path.is_file(), module_path
+for symbol in ("create_adam", "adam_update", "destroy_adam"):
+    assert hasattr(module, symbol), (module_path, symbol)
+print(f"torch={torch.__version__}")
+print(f"cpu_adam={module_path}")
+print("DeepSpeed CPUAdam build/import: PASS")
+PY
+  ) 9>"${lock_file}"
 }
 
 runtime_preflight() {
@@ -143,6 +197,7 @@ assert out.shape == q.shape
 print(f"torch={torch.__version__}")
 print("SM90 BF16 FlashAttention smoke test: PASS")
 PY
+  ensure_deepspeed_cpu_adam
 }
 
 validate_inputs() {
