@@ -11,7 +11,18 @@ ROOT="${ROOT:-/media/damoxing/che-liu-fileset/ylong/sdpo}"
 REPO="${REPO:-${ROOT}/code/distIL-sr-opsd-renyi}"
 ENV_DIR="${ENV_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/envs/verl-vllm010-h200-v2}"
 PYTHON_BIN="${PYTHON_BIN:-${ENV_DIR}/bin/python}"
-MODEL_PATH="${MODEL_PATH:-/media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-8B}"
+MODEL_SIZE="${MODEL_SIZE:-8b}"
+HARDWARE="${HARDWARE:-h200}"
+case "${MODEL_SIZE}" in
+  4b) DEFAULT_MODEL_PATH=/media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-4B-Instruct-2507 ;;
+  8b) DEFAULT_MODEL_PATH=/media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-8B ;;
+  *) echo "ERROR: MODEL_SIZE must be 4b or 8b" >&2; exit 2 ;;
+esac
+case "${HARDWARE}" in
+  a800|h200) ;;
+  *) echo "ERROR: HARDWARE must be a800 or h200" >&2; exit 2 ;;
+esac
+MODEL_PATH="${MODEL_PATH:-${DEFAULT_MODEL_PATH}}"
 MATH_EVAL_DATA_ROOT="${MATH_EVAL_DATA_ROOT:-${ROOT}/data/math_eval}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/math_train_eval5_n16_h200_20260812}"
 
@@ -26,19 +37,19 @@ case "${METHOD}" in
   grpo)
     METHOD_LABEL=GRPO
     METHOD_DIR=grpo
-    RUN_NAME="grpo-8b-seed0-native-verl-lr5e-6-trainbs8-mbs8-rolloutn8-eps0.2-temp0.7-tok16384-steps100-sched420-eval5-n16-h200"
+    RUN_NAME="grpo-${MODEL_SIZE}-seed0-native-verl-lr5e-6-trainbs8-mbs8-rolloutn8-eps0.2-temp0.7-tok16384-steps100-sched420-eval5-n16-${HARDWARE}"
     METHOD_DESCRIPTION="GRPO; epsilon=0.2; group-normalized advantages"
     ;;
   sdpo)
     METHOD_LABEL="SDPO (RKL)"
     METHOD_DIR=sdpo
-    RUN_NAME="sdpo-8b-seed0-native-verl-rkl-ema0.05-lr5e-6-trainbs8-mbs8-rolloutn8-topk100-tailFalse-clip0.05-temp0.7-tok16384-steps100-sched420-eval5-n16-h200"
+    RUN_NAME="sdpo-${MODEL_SIZE}-seed0-native-verl-rkl-ema0.05-lr5e-6-trainbs8-mbs8-rolloutn8-topk100-tailFalse-clip0.05-temp0.7-tok16384-steps100-sched420-eval5-n16-${HARDWARE}"
     METHOD_DESCRIPTION="Reverse KL; EMA teacher=0.05; no frozen-reference anchoring"
     ;;
   sr_opsd)
     METHOD_LABEL=SR-OPSD
     METHOD_DIR=sr_opsd
-    RUN_NAME="sr-opsd-8b-seed0-native-verl-forward-renyi-rho0.95-refw0.9-sync0-ema0.05-lr5e-6-trainbs8-mbs8-rolloutn8-topk100-tailFalse-clip0.05-temp0.7-tok16384-steps100-sched420-eval5-n16-h200"
+    RUN_NAME="sr-opsd-${MODEL_SIZE}-seed0-native-verl-forward-renyi-rho0.95-refw0.9-sync0-ema0.05-lr5e-6-trainbs8-mbs8-rolloutn8-topk100-tailFalse-clip0.05-temp0.7-tok16384-steps100-sched420-eval5-n16-${HARDWARE}"
     METHOD_DESCRIPTION="Forward Renyi rho=0.95; self-reference=0.9; frozen reference sync=0"
     ;;
 esac
@@ -90,6 +101,8 @@ exec > >(tee -a "${LAUNCH_LOG}") 2>&1
 cat >"${STATE_ROOT}/parameters.env" <<EOF
 method=${METHOD}
 framework=SDPO-native-VERL
+model_size=${MODEL_SIZE}
+hardware=${HARDWARE}
 model=${MODEL_PATH}
 seed=0
 train_batch_size=${TRAIN_BATCH_SIZE}
@@ -167,25 +180,43 @@ runtime_preflight() {
   local gpu_count
   gpu_count="$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l | tr -d ' ')"
   [[ "${gpu_count}" == "8" ]] || { echo "ERROR: expected 8 GPUs, found ${gpu_count}" >&2; exit 2; }
-  if nvidia-smi --query-gpu=name --format=csv,noheader | grep -Ev 'H200|H20Z' >/dev/null; then
-    echo "ERROR: this launcher requires eight H200/H20Z GPUs" >&2
-    exit 2
-  fi
+  case "${HARDWARE}" in
+    h200)
+      if nvidia-smi --query-gpu=name --format=csv,noheader | grep -Ev 'H200|H20Z' >/dev/null; then
+        echo "ERROR: this launcher requires eight H200/H20Z GPUs" >&2
+        exit 2
+      fi
+      ;;
+    a800)
+      if nvidia-smi --query-gpu=name --format=csv,noheader | grep -Ev 'A800' >/dev/null; then
+        echo "ERROR: this launcher requires eight A800 GPUs" >&2
+        exit 2
+      fi
+      ;;
+  esac
   nvidia-smi --query-gpu=index,name,memory.total,compute_cap --format=csv,noheader
 
-  "${PYTHON_BIN}" - <<'PY'
+  HARDWARE="${HARDWARE}" "${PYTHON_BIN}" - <<'PY'
 import importlib
+import os
 import torch
+from flash_attn import flash_attn_func
 
 assert torch.cuda.device_count() == 8, torch.cuda.device_count()
+expected_capability = (8, 0) if os.environ["HARDWARE"] == "a800" else (9, 0)
 for index in range(8):
     name = torch.cuda.get_device_name(index)
     capability = torch.cuda.get_device_capability(index)
-    assert capability >= (9, 0), (index, name, capability)
+    assert capability == expected_capability, (index, name, capability, expected_capability)
 for module in ("flash_attn", "ray", "transformers", "vllm", "verl"):
     imported = importlib.import_module(module)
     print(f"{module}: {getattr(imported, '__file__', '<namespace>')}")
+q = torch.randn((1, 16, 4, 64), device="cuda", dtype=torch.bfloat16)
+out = flash_attn_func(q, q, q, causal=True)
+torch.cuda.synchronize()
+assert out.shape == q.shape
 print(f"torch={torch.__version__}")
+print(f"{os.environ['HARDWARE'].upper()} BF16 FlashAttention smoke test: PASS")
 PY
 
   MATH_EVAL_DATA_ROOT="${MATH_EVAL_DATA_ROOT}" REPO="${REPO}" "${PYTHON_BIN}" - <<'PY'
@@ -320,7 +351,7 @@ PY
 
   MODEL_DIR="${merged_dir}" \
   LORA_ADAPTER_DIR="${lora_adapter_dir}" \
-  MODEL_SIZE=8b \
+  MODEL_SIZE="${MODEL_SIZE}" \
   OUTPUT_DIR="${result_dir}" \
   VAL_N="${VAL_N}" \
   TENSOR_PARALLEL_SIZE=8 \
@@ -345,8 +376,9 @@ remove_older_native_checkpoints() {
 }
 
 echo "============================================================"
-echo "Qwen3-8B ${METHOD_LABEL} native VERL train/evaluate pipeline"
+echo "Qwen3-${MODEL_SIZE^^} ${METHOD_LABEL} native VERL train/evaluate pipeline"
 echo "host=$(hostname)"
+echo "hardware=${HARDWARE}"
 echo "framework=SDPO native VERL"
 echo "objective=${METHOD_DESCRIPTION}"
 echo "shared_training=trainbs8; mbs8; rolloutn8; lr5e-6; linear/0; tok16384"
@@ -388,5 +420,5 @@ result_complete 100
 remove_native_checkpoint 100
 rm -f "${RUN_DIR}/latest_checkpointed_iteration.txt"
 touch "${STATE_ROOT}/complete"
-echo "COMPLETE: ${METHOD_LABEL} trained through step 100 and all 20 checkpoints were evaluated at N=16"
+echo "COMPLETE: Qwen3-${MODEL_SIZE^^} ${METHOD_LABEL} trained through step 100 and all 20 checkpoints were evaluated at N=16"
 echo "results=${RESULT_ROOT}"
