@@ -234,9 +234,26 @@ def read_available_evaluations(
     for step in STEPS:
         for dataset in DATASETS:
             path = root / f"checkpoint-{step}" / f"{dataset}.json"
+            if not path.is_file():
+                continue
+            print(
+                f"VALIDATING {spec.profile}: checkpoint-{step} {dataset}",
+                flush=True,
+            )
             try:
                 records[(step, dataset)] = read_eval_header(path, dataset)
-            except (OSError, RuntimeError):
+                row = records[(step, dataset)]
+                print(
+                    f"VALID {spec.profile}: checkpoint-{step} {dataset} "
+                    f"Avg@64={row['avg_pct']:.2f} Pass@64={row['pass_pct']:.2f}",
+                    flush=True,
+                )
+            except (OSError, RuntimeError) as exc:
+                print(
+                    f"SKIP INVALID {spec.profile}: checkpoint-{step} "
+                    f"{dataset}: {exc}",
+                    flush=True,
+                )
                 continue
     return records
 
