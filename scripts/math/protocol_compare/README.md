@@ -22,3 +22,14 @@ clip 2.0, no token-loss clip, and teacher student-update fraction 0.01.
 
 The extra checkpoints and five-dataset evaluation are observational only and
 do not change either optimization protocol.
+
+Upload every currently available training metric and complete N=64 evaluation
+JSON to W&B with:
+
+```bash
+bash scripts/math/protocol_compare/upload_protocol_compare_to_wandb.sh
+```
+
+The destination defaults to `wenxuan-yuan-imperial-college-london/test`.
+Repeated invocations use local state under the output root to upload only new
+training steps or evaluation JSON files.
