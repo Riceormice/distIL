@@ -1,15 +1,42 @@
 import torch
 import argparse
 import json
+import os
 import re
 from pathlib import Path
-from datasets import load_dataset
+from datasets import Dataset, load_dataset
 from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 from tqdm import tqdm
 
 # Use math_verify package directly
 from math_verify import parse, verify
+
+
+def load_local_benchmark(dataset_name: str, dataset_root: str | None):
+    if not dataset_root:
+        return None
+
+    root = Path(dataset_root).expanduser()
+    candidates = [
+        root / dataset_name / "test.parquet",
+        root / dataset_name / "test.jsonl",
+        root / dataset_name / "test.json",
+    ]
+    path = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if path is None:
+        raise FileNotFoundError(f"No local files found for {dataset_name} under {root}")
+
+    if path.suffix == ".parquet":
+        import pyarrow.parquet as pq
+
+        table = pq.read_table(path).replace_schema_metadata(None)
+        dataset = Dataset(table)
+    else:
+        dataset = load_dataset("json", data_files=str(path), split="train")
+
+    print(f"Loaded local {dataset_name} dataset from {path} with {len(dataset)} problems")
+    return dataset
 
 
 def extract_boxed_answer(text: str) -> str:
@@ -64,6 +91,12 @@ def grade_answer(predicted: str, ground_truth: str) -> bool:
     """
     if predicted is None:
         return False
+
+    predicted = str(predicted)
+    if isinstance(ground_truth, float) and ground_truth.is_integer():
+        ground_truth = str(int(ground_truth))
+    else:
+        ground_truth = str(ground_truth)
 
     try:
         # Ensure answers are wrapped in $ for latex parsing
@@ -129,6 +162,14 @@ def load_vllm_model(
         "enforce_eager": True,
     }
 
+    if os.environ.get("VLLM_DISABLE_CUSTOM_ALL_REDUCE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        llm_config["disable_custom_all_reduce"] = True
+        print("Disabling vLLM custom all-reduce; using the NCCL fallback.")
+
     if lora_adapter_path is not None:
         print(f"LoRA adapter path provided: {lora_adapter_path}")
 
@@ -183,6 +224,7 @@ def evaluate_math500(
     base_model_name: str = None,
     enable_thinking: bool = True,
     val_n: int = 1,
+    dataset_root: str | None = None,
 ):
     """
     Evaluate model on MATH500 or other datasets using Qwen3 thinking mode with best practices.
@@ -218,8 +260,11 @@ def evaluate_math500(
     print(f"{'='*70}\n")
 
     print(f"Loading {dataset_name.upper()} dataset...")
-    # Load dataset based on dataset_name
-    if dataset_name.lower() == "math500":
+    # Prefer a fixed local mirror so all machines evaluate identical rows.
+    dataset = load_local_benchmark(dataset_name.lower(), dataset_root)
+    if dataset is not None:
+        pass
+    elif dataset_name.lower() == "math500":
         dataset = load_dataset("HuggingFaceH4/MATH-500", split="test")
         print(f"Loaded HuggingFaceH4/MATH-500 dataset with {len(dataset)} problems")
     elif dataset_name.lower() == "amo-bench":
@@ -575,6 +620,12 @@ def main():
         help="Evaluate several datasets with one model load; overrides --dataset.",
     )
     parser.add_argument(
+        "--dataset_root",
+        type=str,
+        default=os.environ.get("MATH_EVAL_DATA_ROOT"),
+        help="Optional local root containing <dataset>/test.parquet, test.jsonl, or test.json.",
+    )
+    parser.add_argument(
         "--max_new_tokens",
         type=int,
         default=38912,
@@ -761,6 +812,7 @@ def main():
             base_model_name=args.base_model,
             enable_thinking=args.enable_thinking,
             val_n=args.val_n,
+            dataset_root=args.dataset_root,
         )
         averages[dataset_name] = average_at_n_pct
 
