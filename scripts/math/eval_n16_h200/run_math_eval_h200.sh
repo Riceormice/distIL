@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-METHOD="${1:?Usage: $0 sdpo|sr_opsd 12|16}"
-VAL_N="${2:?Usage: $0 sdpo|sr_opsd 12|16}"
+METHOD="${1:?Usage: $0 grpo|sdpo|sr_opsd}"
 case "${METHOD}" in
-  sdpo|sr_opsd) ;;
-  *) echo "ERROR: METHOD must be sdpo or sr_opsd" >&2; exit 2 ;;
+  grpo|sdpo|sr_opsd) ;;
+  *) echo "ERROR: METHOD must be grpo, sdpo, or sr_opsd" >&2; exit 2 ;;
 esac
-case "${VAL_N}" in
-  12|16) ;;
-  *) echo "ERROR: VAL_N must be 12 or 16" >&2; exit 2 ;;
-esac
+VAL_N=16
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/common_a800_eval.sh"
+source "${SCRIPT_DIR}/common_h200_eval.sh"
 
-CHECKPOINT_DIR="${CHECKPOINT_DIR:?Set CHECKPOINT_DIR to the exact SDPO or SR-OPSD checkpoint. Use the same checkpoint for N=12 and N=16.}"
+CHECKPOINT_DIR="${CHECKPOINT_DIR:?Set CHECKPOINT_DIR to the exact ${METHOD} checkpoint}"
 CHECKPOINT_DIR="$(readlink -f "${CHECKPOINT_DIR}")"
 [[ -d "${CHECKPOINT_DIR}" ]] || { echo "ERROR: checkpoint directory not found: ${CHECKPOINT_DIR}" >&2; exit 2; }
 
@@ -28,7 +24,7 @@ run_tag="${RUN_TAG:-${parent_tag}-${checkpoint_tag}}"
 run_tag="$(printf '%s' "${run_tag}" | tr -cs 'A-Za-z0-9._-' '-')"
 run_tag="${run_tag%-}"
 
-RUN_ROOT="${OUTPUT_ROOT}/${METHOD}/n${VAL_N}/${run_tag}"
+RUN_ROOT="${OUTPUT_ROOT}/${METHOD}/n16/${run_tag}"
 RESULT_DIR="${RUN_ROOT}/results"
 MERGED_DIR="${RUN_ROOT}/merged_checkpoint"
 STATE_DIR="${RUN_ROOT}/state"
@@ -45,7 +41,7 @@ cleanup() {
   local status=$?
   trap - EXIT
   if [[ "${REMOVE_TEMP_MERGE:-1}" == "1" && "${CREATED_TEMP_MERGE:-0}" == "1" ]]; then
-    rm -rf "${MERGED_DIR}"
+    find "${MERGED_DIR}" -depth -delete 2>/dev/null || true
   fi
   if (( status == 0 )); then
     touch "${STATE_DIR}/complete"
@@ -57,10 +53,10 @@ cleanup() {
 trap cleanup EXIT
 
 echo "============================================================"
-echo "Qwen3-8B math evaluation"
+echo "Qwen3-8B math evaluation on H200"
 echo "host=$(hostname)"
 echo "method=${METHOD}"
-echo "samples_per_question=${VAL_N}"
+echo "samples_per_question=16"
 echo "checkpoint=${CHECKPOINT_DIR}"
 echo "datasets=AIME24,AIME25,HMMT25,AMC23,Minerva"
 echo "thinking=enabled"
@@ -108,7 +104,7 @@ else
 fi
 
 if [[ -n "${actor_dir}" ]]; then
-  rm -rf "${MERGED_DIR}"
+  find "${MERGED_DIR}" -depth -delete 2>/dev/null || true
   echo "Merging verl FSDP actor checkpoint: ${actor_dir}"
   "${ENV_DIR}/bin/python" -m verl.model_merger merge \
     --backend fsdp \
@@ -146,19 +142,14 @@ for path in candidates:
 manifest = {
     "created_at": datetime.now(timezone.utc).isoformat(),
     "method": os.environ["METHOD"],
-    "samples_per_question": int(os.environ["VAL_N"]),
+    "samples_per_question": 16,
     "checkpoint_dir": str(checkpoint),
     "model_dir": os.environ["MODEL_DIR"],
     "lora_adapter_dir": os.environ.get("LORA_ADAPTER_DIR") or None,
     "datasets": ["aime24", "aime25", "hmmt25", "amc23", "minerva"],
     "evaluation": {
-        "thinking": True,
-        "temperature": 1.0,
-        "top_p": 1.0,
-        "top_k": -1,
-        "min_p": 0.0,
-        "presence_penalty": 0.0,
-        "max_new_tokens": 38912,
+        "thinking": True, "temperature": 1.0, "top_p": 1.0, "top_k": -1,
+        "min_p": 0.0, "presence_penalty": 0.0, "max_new_tokens": 38912,
         "tensor_parallel_size": 8,
     },
     "identity_files": files,
@@ -172,9 +163,9 @@ MODEL_DIR="${MODEL_DIR}" \
 LORA_ADAPTER_DIR="${LORA_ADAPTER_DIR}" \
 MODEL_SIZE=8b \
 OUTPUT_DIR="${RESULT_DIR}" \
-VAL_N="${VAL_N}" \
+VAL_N=16 \
 TENSOR_PARALLEL_SIZE=8 \
-EVAL_GPU_MEMORY_UTILIZATION="${EVAL_GPU_MEMORY_UTILIZATION:-0.88}" \
+EVAL_GPU_MEMORY_UTILIZATION="${EVAL_GPU_MEMORY_UTILIZATION:-0.90}" \
 MATH_EVAL_DATA_ROOT="${MATH_EVAL_DATA_ROOT}" \
 PYTHON_BIN="${ENV_DIR}/bin/python" \
 bash "${REPO}/scripts/math/eval_sr_opsd_verl_math.sh"
@@ -190,13 +181,9 @@ rows = []
 for dataset in ("aime24", "aime25", "hmmt25", "amc23", "minerva"):
     payload = json.loads((root / f"{dataset}.json").read_text(encoding="utf-8"))
     rows.append({
-        "method": os.environ["METHOD"],
-        "dataset": dataset,
-        "samples": int(os.environ["VAL_N"]),
-        "problems": payload["num_problems"],
-        "avg": payload["average_at_n_pct"],
-        "pass": payload["pass_at_n_pct"],
-        "majority": payload["majority_vote_at_n_pct"],
+        "method": os.environ["METHOD"], "dataset": dataset, "samples": 16,
+        "problems": payload["num_problems"], "avg": payload["average_at_n_pct"],
+        "pass": payload["pass_at_n_pct"], "majority": payload["majority_vote_at_n_pct"],
         "format": payload["format_rate"],
     })
 
@@ -208,5 +195,5 @@ with path.open("w", newline="", encoding="utf-8") as handle:
 print(path.read_text(encoding="utf-8"), end="")
 PY
 
-echo "COMPLETE: ${METHOD} Average/Pass/Majority/Format@${VAL_N}"
+echo "COMPLETE: ${METHOD} Average/Pass/Majority/Format@16"
 echo "summary=${RUN_ROOT}/summary.csv"
