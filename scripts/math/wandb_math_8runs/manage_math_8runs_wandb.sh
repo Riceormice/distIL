@@ -13,16 +13,36 @@ PROJECT="${WANDB_PROJECT:-test}"
 
 resolve_python() {
   local candidate
-  if [[ -n "${WANDB_PYTHON_BIN:-}" && -x "${WANDB_PYTHON_BIN}" ]]; then
+  candidate_is_compatible() {
+    local python_bin="$1"
+    [[ -x "${python_bin}" ]] || return 1
+    "${python_bin}" - "${WANDB_API_KEY:-}" <<'PY' >/dev/null 2>&1
+import re
+import sys
+from importlib.metadata import version
+
+import wandb  # noqa: F401
+
+match = re.match(r"^(\d+)\.(\d+)", version("wandb"))
+if match is None:
+    raise SystemExit(1)
+installed = tuple(map(int, match.groups()))
+key = sys.argv[1]
+if key.startswith("wandb_v1_") and installed < (0, 22):
+    raise SystemExit(1)
+PY
+  }
+
+  if [[ -n "${WANDB_PYTHON_BIN:-}" ]] && candidate_is_compatible "${WANDB_PYTHON_BIN}"; then
     printf '%s\n' "${WANDB_PYTHON_BIN}"
     return 0
   fi
   for candidate in \
-    /media/damoxing/che-liu-fileset/ylong/sdpo/envs/wandb-upload/bin/python \
+    /media/vlm-ckp-fileset/ylong/sdpo/envs/wandb-upload/bin/python \
     /media/damoxing/che-liu-fileset/ylong/sdpo/envs/wandb-uploader/bin/python \
-    /media/vlm-ckp-fileset/ylong/sdpo/envs/wandb-upload/bin/python
+    /media/damoxing/che-liu-fileset/ylong/sdpo/envs/wandb-upload/bin/python
   do
-    if [[ -x "${candidate}" ]] && "${candidate}" -c 'import wandb' >/dev/null 2>&1; then
+    if candidate_is_compatible "${candidate}"; then
       printf '%s\n' "${candidate}"
       return 0
     fi
@@ -43,6 +63,36 @@ load_credentials() {
     exit 2
   fi
   export WANDB_API_KEY
+}
+
+show_doctor() {
+  local key_status="missing" key_length=0 python_bin="unavailable" version="unknown"
+  if [[ -r "${WANDB_ENV_FILE}" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "${WANDB_ENV_FILE}"
+    set +a
+  fi
+  if [[ -n "${WANDB_API_KEY:-}" ]]; then
+    key_status="present"
+    key_length="${#WANDB_API_KEY}"
+    export WANDB_API_KEY
+  fi
+  if resolved="$(resolve_python 2>/dev/null)"; then
+    python_bin="${resolved}"
+    version="$("${python_bin}" -c 'from importlib.metadata import version; print(version("wandb"))')"
+  fi
+  echo "key_file=${WANDB_ENV_FILE}"
+  echo "key_status=${key_status}"
+  echo "key_length=${key_length}"
+  echo "python=${python_bin}"
+  echo "wandb_version=${version}"
+  echo "state_root=${STATE_ROOT}"
+  echo "log=${LOG_FILE}"
+  if [[ -f "${LOG_FILE}" ]]; then
+    echo "===== latest log ====="
+    tail -n 80 "${LOG_FILE}" || true
+  fi
 }
 
 is_running() {
@@ -151,8 +201,11 @@ case "${1:-status}" in
       --state-dir "${STATE_ROOT}" \
       --dry-run
     ;;
+  doctor)
+    show_doctor
+    ;;
   *)
-    echo "Usage: $0 {start|stop|restart|status|once|dry-run}" >&2
+    echo "Usage: $0 {start|stop|restart|status|once|dry-run|doctor}" >&2
     exit 2
     ;;
 esac

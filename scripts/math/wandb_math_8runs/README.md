@@ -21,6 +21,7 @@ UPLOAD_INTERVAL_SECONDS=600 bash \
   /media/damoxing/che-liu-fileset/ylong/sdpo/code/distIL-sr-opsd-renyi/scripts/math/wandb_math_8runs/manage_math_8runs_wandb.sh start
 ```
 
-Inspect it with `status`, run one immediate cycle with `once`, and terminate it
-with `stop`. The W&B key is loaded from `/root/.config/wandb/upload.env` and is
-never printed.
+Inspect it with `status`, diagnose credentials/runtime selection with `doctor`,
+run one immediate cycle with `once`, and terminate it with `stop`. The W&B key
+is loaded from `/root/.config/wandb/upload.env` and is never printed. New
+`wandb_v1_...` secrets are automatically routed to W&B 0.22 or newer.
