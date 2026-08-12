@@ -14,7 +14,7 @@ PYTHON_BIN="${PYTHON_BIN:-${ENV_DIR}/bin/python}"
 MODEL_SIZE="${MODEL_SIZE:-8b}"
 HARDWARE="${HARDWARE:-h200}"
 case "${MODEL_SIZE}" in
-  4b) DEFAULT_MODEL_PATH=/media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-4B-Instruct-2507 ;;
+  4b) DEFAULT_MODEL_PATH=/media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-4B ;;
   8b) DEFAULT_MODEL_PATH=/media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-8B ;;
   *) echo "ERROR: MODEL_SIZE must be 4b or 8b" >&2; exit 2 ;;
 esac

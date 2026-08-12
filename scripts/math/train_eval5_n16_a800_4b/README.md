@@ -5,7 +5,7 @@ train to physical step 100 using a 420-step linear learning-rate horizon and
 pause every five steps for external evaluation. Each evaluation uses thinking
 mode and 16 samples per problem on AIME24, AIME25, HMMT25, AMC23, and Minerva.
 
-Shared training settings are Qwen3-4B-Instruct-2507, seed 0, learning rate
+Shared training settings are Qwen3-4B, seed 0, learning rate
 5e-6, no warmup, weight decay 0, gradient clipping 0.1, response length 16384,
 temperature/top-p/top-k 0.7/0.95/20, eight rollouts, and LoRA rank 64. The
 three native VERL lanes use train/mini-batch sizes 8/8. OPSD uses its dedicated

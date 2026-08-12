@@ -12,9 +12,9 @@ REPO="${REPO:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
 
 if [[ -z "${MODEL_PATH:-}" ]]; then
   for candidate in \
-    /media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-4B-Instruct-2507 \
-    /media/vlm-ckp-fileset/ylong/models/Qwen3-4B-Instruct-2507 \
-    /media/damoxing/che-liu-fileset/ylong/sdpo/models/Qwen3-4B-Instruct-2507
+    /media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-4B \
+    /media/vlm-ckp-fileset/ylong/models/Qwen3-4B \
+    /media/damoxing/che-liu-fileset/ylong/sdpo/models/Qwen3-4B
   do
     if [[ -s "${candidate}/config.json" ]]; then
       MODEL_PATH="${candidate}"
@@ -29,18 +29,18 @@ if [[ -z "${MODEL_PATH:-}" ]]; then
     break
   done < <(
     find /media/vlm-ckp-fileset/ylong /media/damoxing/che-liu-fileset/ylong \
-      -maxdepth 7 -type f -path '*/Qwen3-4B-Instruct-2507/config.json' \
+      -maxdepth 7 -type f -path '*/Qwen3-4B/config.json' \
       -print 2>/dev/null
   )
 fi
 
 if [[ -z "${MODEL_PATH:-}" || ! -s "${MODEL_PATH}/config.json" ]]; then
-  echo "ERROR: Qwen3-4B-Instruct-2507 was not found." >&2
+  echo "ERROR: Qwen3-4B was not found." >&2
   echo "Set MODEL_PATH to its exact local directory before launching." >&2
   exit 2
 fi
 
-echo "Resolved Qwen3-4B-Instruct-2507: ${MODEL_PATH}"
+echo "Resolved Qwen3-4B: ${MODEL_PATH}"
 
 exec env \
   REPO="${REPO}" \

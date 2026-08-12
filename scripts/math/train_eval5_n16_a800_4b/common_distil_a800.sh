@@ -20,9 +20,9 @@ FLASH_PACKAGE_OVERLAY="${RUNTIME_OVERLAY}/flash_attn_2_8_3"
 
 if [[ -z "${BASE_MODEL_DIR:-}" ]]; then
   for candidate in \
-    /media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-4B-Instruct-2507 \
-    /media/vlm-ckp-fileset/ylong/models/Qwen3-4B-Instruct-2507 \
-    /media/damoxing/che-liu-fileset/ylong/sdpo/models/Qwen3-4B-Instruct-2507
+    /media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-4B \
+    /media/vlm-ckp-fileset/ylong/models/Qwen3-4B \
+    /media/damoxing/che-liu-fileset/ylong/sdpo/models/Qwen3-4B
   do
     if [[ -s "${candidate}/config.json" ]]; then
       BASE_MODEL_DIR="${candidate}"
@@ -36,12 +36,12 @@ if [[ -z "${BASE_MODEL_DIR:-}" ]]; then
     break
   done < <(
     find /media/vlm-ckp-fileset/ylong /media/damoxing/che-liu-fileset/ylong \
-      -maxdepth 7 -type f -path '*/Qwen3-4B-Instruct-2507/config.json' \
+      -maxdepth 7 -type f -path '*/Qwen3-4B/config.json' \
       -print 2>/dev/null
   )
 fi
 if [[ -z "${BASE_MODEL_DIR:-}" || ! -s "${BASE_MODEL_DIR}/config.json" ]]; then
-  echo "ERROR: Qwen3-4B-Instruct-2507 was not found." >&2
+  echo "ERROR: Qwen3-4B was not found." >&2
   echo "Set BASE_MODEL_DIR to its exact local directory before launching." >&2
   exit 2
 fi
