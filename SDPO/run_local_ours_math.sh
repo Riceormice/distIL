@@ -17,6 +17,7 @@ TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-8}"
 PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-8}"
 ROLLOUT_N="${ROLLOUT_N:-1}"
 TOTAL_STEPS="${TOTAL_STEPS:-100}"
+STOP_AFTER_STEP="${STOP_AFTER_STEP:-0}"
 TOTAL_EPOCHS="${TOTAL_EPOCHS:-15}"
 TEST_FREQ="${TEST_FREQ:-100}"
 SAVE_FREQ="${SAVE_FREQ:-100}"
@@ -197,6 +198,7 @@ ARGS=(
   "trainer.n_gpus_per_node=${NUM_GPUS}"
   "trainer.nnodes=1"
   "trainer.total_training_steps=${TOTAL_STEPS}"
+  "trainer.stop_after_step=${STOP_AFTER_STEP}"
   "trainer.total_epochs=${TOTAL_EPOCHS}"
   "trainer.test_freq=${TEST_FREQ}"
   "trainer.save_freq=${SAVE_FREQ}"
@@ -214,7 +216,7 @@ model=${MODEL_PATH}
 data=${DATA_DIR}
 output=${RUN_DIR}
 gpus=${NUM_GPUS}
-steps=${TOTAL_STEPS}, epochs=${TOTAL_EPOCHS}, eval=${TEST_FREQ}, save=${SAVE_FREQ}
+steps=${TOTAL_STEPS}, stop_after=${STOP_AFTER_STEP}, epochs=${TOTAL_EPOCHS}, eval=${TEST_FREQ}, save=${SAVE_FREQ}
 checkpoint_contents=${CHECKPOINT_SAVE_CONTENTS}, save_ema_teacher=${SAVE_TEACHER_CHECKPOINT}
 alpha=${DIVERGENCE_ALPHA}, rho=${RENYI_ORDER}
 self_reference_weight=${SELF_REFERENCE_WEIGHT}, ref_sync=${REF_SYNC_STEPS}

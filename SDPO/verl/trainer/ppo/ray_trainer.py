@@ -1941,6 +1941,12 @@ class RayPPOTrainer:
                 logger.log(data=metrics, step=self.global_steps)
 
                 progress_bar.update(1)
+                stop_after_step = self.config.trainer.get("stop_after_step", None)
+                should_stop_after_step = (
+                    stop_after_step is not None
+                    and int(stop_after_step) > 0
+                    and self.global_steps >= int(stop_after_step)
+                )
                 self.global_steps += 1
 
                 if (
@@ -1955,6 +1961,13 @@ class RayPPOTrainer:
                     if hasattr(self.actor_rollout_wg, "async_calls_finalize_fn_exec"):
                         self.actor_rollout_wg.async_calls_finalize_fn_exec(blocking=True)
                     pprint(f"Final validation metrics: {last_val_metrics}")
+                    progress_bar.close()
+                    return
+
+                if should_stop_after_step:
+                    if hasattr(self.actor_rollout_wg, "async_calls_finalize_fn_exec"):
+                        self.actor_rollout_wg.async_calls_finalize_fn_exec(blocking=True)
+                    pprint(f"Stopped cleanly after staged checkpoint step {int(stop_after_step)}")
                     progress_bar.close()
                     return
 

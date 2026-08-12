@@ -131,6 +131,10 @@ trainer:
   # Total training steps (can be set explicitly or derived from epochs)
   total_training_steps: null
 
+  # Stop cleanly after this step while preserving total_training_steps for
+  # optimizer scheduling. Null disables staged stopping.
+  stop_after_step: null
+
   # Project name for experiment tracking (e.g., wandb)
   project_name: verl_examples
 
