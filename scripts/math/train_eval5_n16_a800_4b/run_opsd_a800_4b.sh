@@ -11,7 +11,6 @@ SAVE_STEPS="$(seq -s, 5 5 100)"
 SEED=0
 LR=5e-6
 GRADIENT_ACCUMULATION_STEPS=1
-ROLLOUT_N=8
 ROLLOUT_TEMPERATURE=0.7
 TOP_P=0.95
 TOP_K=20
@@ -41,7 +40,7 @@ model=${BASE_MODEL_DIR}
 seed=${SEED}
 per_device_batch_size=1
 gradient_accumulation_steps=${GRADIENT_ACCUMULATION_STEPS}
-rollouts_per_question=${ROLLOUT_N}
+rollouts_per_question=1
 learning_rate=${LR}
 lr_scheduler=linear
 warmup_steps=0
@@ -134,7 +133,6 @@ launch_phase() {
     --lora_r 64
     --lora_alpha 128
     --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj
-    --num_generations "${ROLLOUT_N}"
     --temperature "${ROLLOUT_TEMPERATURE}"
     --top_p "${TOP_P}"
     --top_k "${TOP_K}"
