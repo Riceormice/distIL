@@ -1,7 +1,8 @@
 # Qwen3-8B mathematics train/evaluate lanes
 
 Four independent 8xH200 lanes train GRPO, SDPO, OPSD, and SR-OPSD through
-step 100. Each lane pauses at steps 5, 10, ..., 100 and evaluates AIME24,
+step 100 while retaining the original 420-step learning-rate horizon. Each
+lane pauses at steps 5, 10, ..., 100 and evaluates AIME24,
 AIME25, HMMT25, AMC23, and Minerva with thinking enabled and 16 samples per
 question.
 

@@ -8,7 +8,7 @@ PYTHON_BIN="${PYTHON_BIN:-${ENV_DIR}/bin/python}"
 MODEL_PATH="${MODEL_PATH:-/media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-8B}"
 MATH_EVAL_DATA_ROOT="${MATH_EVAL_DATA_ROOT:-${ROOT}/data/math_eval}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/math_train_eval5_n16_h200_20260812}"
-RUN_NAME="sr-opsd-8b-seed0-forward-renyi-rho0.95-refw0.9-sync0-lr5e-6-tok16384-steps100-eval5-n16-h200"
+RUN_NAME="sr-opsd-8b-seed0-forward-renyi-rho0.95-refw0.9-sync0-lr5e-6-tok16384-steps100-sched420-eval5-n16-h200"
 RUN_ROOT="${OUTPUT_ROOT}/sr_opsd/${RUN_NAME}"
 TRAIN_OUTPUT_ROOT="${RUN_ROOT}/native"
 RUN_DIR="${TRAIN_OUTPUT_ROOT}/checkpoints/${RUN_NAME}"
@@ -168,7 +168,7 @@ launch_phase() {
     TRAIN_BATCH_SIZE=8 \
     PPO_MINI_BATCH_SIZE=8 \
     ROLLOUT_N=1 \
-    TOTAL_STEPS=100 \
+    TOTAL_STEPS=420 \
     STOP_AFTER_STEP="${stop_after_step}" \
     TEST_FREQ=-1 \
     SAVE_FREQ=5 \
@@ -263,7 +263,7 @@ remove_older_native_checkpoints() {
 echo "============================================================"
 echo "Qwen3-8B SR-OPSD train/evaluate pipeline"
 echo "host=$(hostname)"
-echo "training=100 steps; external distIL evaluation every 5 steps"
+echo "training=100 actual steps; learning-rate horizon=420; external distIL evaluation every 5 steps"
 echo "evaluation=five math datasets; thinking; N=16; TP=8"
 echo "objective=Forward Renyi rho=0.95; self-reference=0.9; frozen reference sync=0"
 echo "checkpoint_policy=retain current resume point only; delete after next checkpoint; delete final after eval"
