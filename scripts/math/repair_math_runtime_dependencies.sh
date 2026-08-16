@@ -8,6 +8,9 @@ OPSD_ENV="${OPSD_ENV:-/media/vlm-ckp-fileset/ylong/sdpo/envs/opsd-math}"
 CONDA_ROOT="${CONDA_ROOT:-/media/damoxing/che-liu-fileset/conda}"
 OVERLAY="${MATH_DEPENDENCY_REPAIR_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_dependency_repair_20260816}"
 
+# Avoid importing the stale setuptools shim referenced by shared .pth files.
+export SETUPTOOLS_USE_DISTUTILS=stdlib
+
 CORE_RUNTIME="${CORE_RUNTIME:-/media/vlm-ckp-fileset/ylong/sdpo/runtime/math-core-torch2.8-ray2.50.1-v1}"
 PYTHON_EXTRAS="${PYTHON_EXTRAS:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets/math-python-extras-v1}"
 PYTHON_COMPLETE="${PYTHON_COMPLETE:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets/math-python-complete-v2}"
@@ -58,6 +61,7 @@ select_root() {
 RAY_ROOT="$(select_root ray _common/utils.py true)"
 DEEPSPEED_ROOT="$(select_root deepspeed runtime/engine.py)"
 ACCELERATE_ROOT="$(select_root accelerate utils/dataclasses.py)"
+SIMPLEJSON_ROOT="$(select_root simplejson __init__.py)"
 
 TEMP="${OVERLAY}.tmp.$$"
 rm -rf -- "${TEMP}"
@@ -65,12 +69,14 @@ mkdir -p "${TEMP}"
 ln -s "${RAY_ROOT}/ray" "${TEMP}/ray"
 ln -s "${DEEPSPEED_ROOT}/deepspeed" "${TEMP}/deepspeed"
 ln -s "${ACCELERATE_ROOT}/accelerate" "${TEMP}/accelerate"
+ln -s "${SIMPLEJSON_ROOT}/simplejson" "${TEMP}/simplejson"
 
 # Keep package metadata consistent with the package code selected above.
 for package_spec in \
   "${RAY_ROOT}/ray-*.dist-info" \
   "${DEEPSPEED_ROOT}/deepspeed-*.dist-info" \
-  "${ACCELERATE_ROOT}/accelerate-*.dist-info"
+  "${ACCELERATE_ROOT}/accelerate-*.dist-info" \
+  "${SIMPLEJSON_ROOT}/simplejson-*.dist-info"
 do
   for metadata_dir in ${package_spec}; do
     [[ -d "${metadata_dir}" ]] || continue
@@ -81,6 +87,7 @@ done
 echo "ray_source=${RAY_ROOT}" >"${TEMP}/sources.env"
 echo "deepspeed_source=${DEEPSPEED_ROOT}" >>"${TEMP}/sources.env"
 echo "accelerate_source=${ACCELERATE_ROOT}" >>"${TEMP}/sources.env"
+echo "simplejson_source=${SIMPLEJSON_ROOT}" >>"${TEMP}/sources.env"
 
 echo "===== VERL Ray validation ====="
 env -u PYTHONHOME -u CONDA_PREFIX \
@@ -102,9 +109,12 @@ PYTHONHOME="${CONDA_ROOT}" PYTHONNOUSERSITE=1 PYTHONPATH="${OPSD_PYTHONPATH}" \
 from pathlib import Path
 import accelerate.utils.dataclasses
 import deepspeed.runtime.engine
+import simplejson
 
 print(f"accelerate.utils.dataclasses={Path(accelerate.utils.dataclasses.__file__).resolve()}")
 print(f"deepspeed.runtime.engine={Path(deepspeed.runtime.engine.__file__).resolve()}")
+print(f"simplejson={Path(simplejson.__file__).resolve()}")
+assert simplejson.JSONDecodeError
 PY
 
 touch "${TEMP}/.complete"

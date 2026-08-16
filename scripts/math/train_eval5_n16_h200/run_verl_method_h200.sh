@@ -74,6 +74,7 @@ fi
 export PYTHON_BIN
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 export PYTHONUNBUFFERED=1
+export SETUPTOOLS_USE_DISTUTILS=stdlib
 export TOKENIZERS_PARALLELISM=false
 export HF_HOME="${HF_HOME:-/media/vlm-ckp-fileset/ylong/sdpo/cache/huggingface}"
 export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-/media/vlm-ckp-fileset/ylong/sdpo/cache/datasets}"
