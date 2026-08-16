@@ -47,7 +47,7 @@ exec env \
   MODEL_SIZE=4b \
   HARDWARE=a800 \
   MODEL_PATH="${MODEL_PATH}" \
-  ENV_DIR="${ENV_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/envs/verl-vllm010-h200-v2}" \
+  ENV_DIR="${ENV_DIR:-/media/damoxing/che-liu-fileset/ylong/sdpo/envs/math-verl-current}" \
   OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/math_4b_train_eval5_n16_a800_20260812}" \
   VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.35}" \
   EVAL_GPU_MEMORY_UTILIZATION="${EVAL_GPU_MEMORY_UTILIZATION:-0.90}" \

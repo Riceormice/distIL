@@ -4,34 +4,22 @@ ROOT="${ROOT:-/media/damoxing/che-liu-fileset/ylong/sdpo}"
 REPO="${REPO:-${ROOT}/code/distIL-sr-opsd-renyi}"
 BASELINE_REPO="${BASELINE_REPO:-${ROOT}/code/distIL}"
 BASELINE_OPSD="${BASELINE_REPO}/OPSD"
-ENV_DIR="${ENV_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/envs/opsd-math}"
-CORE_RUNTIME="${CORE_RUNTIME:-/media/vlm-ckp-fileset/ylong/sdpo/runtime/math-core-torch2.8-ray2.50.1-v1}"
-PYTHON_EXTRAS="${PYTHON_EXTRAS:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets/math-python-extras-v1}"
-PYTHON_COMPLETE="${PYTHON_COMPLETE:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets/math-python-complete-v2}"
-VLLM_COMPLETE="${VLLM_COMPLETE:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets/math-vllm-python-complete-v1}"
-TORCH_SHM_MANAGER_ASSET="${TORCH_SHM_MANAGER_ASSET:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets/torch2.8/torch_shm_manager.compat}"
-TORCH_HEADER_ROOT="${TORCH_HEADER_ROOT:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets/torch-2.8.0-headers-v1/torch/include}"
+source "${REPO}/scripts/math/unified_env/activate_unified_math_env.sh" opsd
+TORCH_HEADER_ROOT="${TORCH_HEADER_ROOT:-${ENV_DIR}/lib/python3.11/site-packages/torch/include}"
 TORCH_CXX_HEADER_ROOT="${TORCH_CXX_HEADER_ROOT:-${TORCH_HEADER_ROOT}/torch/csrc/api/include}"
 TORCH_EXTENSIONS_DIR="${TORCH_EXTENSIONS_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_extensions/math-torch2.8-cu128-h200-v1}"
-FLASH_SOURCE="${FLASH_SOURCE:-/media/vlm-ckp-fileset/ylong/sdpo/build/flash-attn-sm90/src}"
-CONDA_ROOT="${CONDA_ROOT:-/media/damoxing/che-liu-fileset/conda}"
 SITE_PACKAGES="${ENV_DIR}/lib/python3.11/site-packages"
-RUNTIME_OVERLAY="${RUNTIME_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_train_eval5_n16_h200}"
-FLASH_PACKAGE_OVERLAY="${RUNTIME_OVERLAY}/flash_attn_2_8_3"
-DEPENDENCY_REPAIR_OVERLAY="${MATH_DEPENDENCY_REPAIR_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_dependency_repair_20260816}"
 
 BASE_MODEL_DIR="${BASE_MODEL_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-8B}"
 MATH_TRAIN_DATA="${MATH_TRAIN_DATA:-${BASELINE_OPSD}/data/math/train.jsonl}"
 MATH_EVAL_DATA_ROOT="${MATH_EVAL_DATA_ROOT:-${ROOT}/data/math_eval}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/math_train_eval5_n16_h200_20260812}"
 
-export ROOT REPO BASELINE_REPO BASELINE_OPSD ENV_DIR CORE_RUNTIME
-export DEPENDENCY_REPAIR_OVERLAY
-export PYTHON_EXTRAS PYTHON_COMPLETE VLLM_COMPLETE TORCH_SHM_MANAGER_ASSET
+export ROOT REPO BASELINE_REPO BASELINE_OPSD ENV_DIR
 export TORCH_HEADER_ROOT TORCH_CXX_HEADER_ROOT TORCH_EXTENSIONS_DIR
-export FLASH_SOURCE CONDA_ROOT SITE_PACKAGES RUNTIME_OVERLAY FLASH_PACKAGE_OVERLAY
+export SITE_PACKAGES
 export BASE_MODEL_DIR MATH_TRAIN_DATA MATH_EVAL_DATA_ROOT OUTPUT_ROOT
-export SETUPTOOLS_USE_DISTUTILS=stdlib
+unset SETUPTOOLS_USE_DISTUTILS
 
 require_file() {
   [[ -f "$1" ]] || { echo "ERROR: missing required file: $1" >&2; exit 2; }
@@ -50,27 +38,15 @@ require_file "${REPO}/scripts/math/validate_math_eval.py"
 require_file "${REPO}/OPSD/eval/evaluate_math.py"
 require_file "${BASE_MODEL_DIR}/config.json"
 require_file "${MATH_TRAIN_DATA}"
-require_file "${CORE_RUNTIME}/ray/dag/compiled_dag_node.py"
-require_file "${TORCH_SHM_MANAGER_ASSET}"
+require_file "${ENV_DIR}/.math-env-complete"
+require_executable "${SITE_PACKAGES}/torch/bin/torch_shm_manager"
 require_file "${TORCH_HEADER_ROOT}/torch/extension.h"
 require_file "${TORCH_CXX_HEADER_ROOT}/torch/all.h"
-require_file "${FLASH_SOURCE}/flash_attn/__init__.py"
-require_file "${SITE_PACKAGES}/flash_attn_2_cuda.cpython-311-x86_64-linux-gnu.so"
-require_file "${PYTHON_COMPLETE}/.complete"
-require_file "${VLLM_COMPLETE}/.complete"
-require_file "${VLLM_COMPLETE}/vllm/_C.abi3.so"
+require_file "${SITE_PACKAGES}/flash_attn/__init__.py"
+compgen -G "${SITE_PACKAGES}/flash_attn_2_cuda*.so" >/dev/null
+compgen -G "${SITE_PACKAGES}/vllm/_C*.so" >/dev/null
 
-mkdir -p "${FLASH_PACKAGE_OVERLAY}"
-if [[ -e "${FLASH_PACKAGE_OVERLAY}/flash_attn" && ! -L "${FLASH_PACKAGE_OVERLAY}/flash_attn" ]]; then
-  echo "ERROR: FlashAttention overlay exists and is not a symlink" >&2
-  exit 2
-fi
-ln -sfn "${FLASH_SOURCE}/flash_attn" "${FLASH_PACKAGE_OVERLAY}/flash_attn"
-
-export PATH="${ENV_DIR}/bin:/usr/local/cuda/bin:/usr/bin:/bin:${PATH:-}"
-export PYTHONHOME="${CONDA_ROOT}"
-export PYTHONNOUSERSITE=1
-export LD_LIBRARY_PATH="${CORE_RUNTIME}/torch/lib:${ENV_DIR}/lib:${SITE_PACKAGES}/nvidia/cuda_runtime/lib:${LD_LIBRARY_PATH:-}"
+export PYTHONPATH="${BASELINE_OPSD}:${BASELINE_REPO}"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 export TOKENIZERS_PARALLELISM=false
 export PYTHONUNBUFFERED=1
@@ -106,23 +82,12 @@ for script in "${BASELINE_OPSD}/opsd_train.py"; do
   }
 done
 
-repair_torch_shm_manager() {
-  local target="${CORE_RUNTIME}/torch/bin/torch_shm_manager"
-  if [[ ! -x "${target}" ]] || ! cmp -s "${TORCH_SHM_MANAGER_ASSET}" "${target}"; then
-    mkdir -p "$(dirname "${target}")"
-    local temporary="${target}.repair.$$"
-    install -m 0555 "${TORCH_SHM_MANAGER_ASSET}" "${temporary}"
-    mv -f "${temporary}" "${target}"
-    echo "Restored torch_shm_manager: ${target}"
-  fi
-}
-
 distil_pythonpath() {
-  printf '%s' "${DEPENDENCY_REPAIR_OVERLAY}:${FLASH_PACKAGE_OVERLAY}:${BASELINE_OPSD}:${BASELINE_REPO}:${PYTHON_EXTRAS}:${VLLM_COMPLETE}:${PYTHON_COMPLETE}:${CORE_RUNTIME}:${SITE_PACKAGES}"
+  printf '%s' "${BASELINE_OPSD}:${BASELINE_REPO}"
 }
 
 eval_pythonpath() {
-  printf '%s' "${DEPENDENCY_REPAIR_OVERLAY}:${FLASH_PACKAGE_OVERLAY}:${REPO}/OPSD:${REPO}:${PYTHON_EXTRAS}:${VLLM_COMPLETE}:${PYTHON_COMPLETE}:${CORE_RUNTIME}:${SITE_PACKAGES}"
+  printf '%s' "${REPO}/OPSD:${REPO}"
 }
 
 ensure_deepspeed_cpu_adam() {
@@ -159,7 +124,6 @@ PY
 }
 
 runtime_preflight() {
-  repair_torch_shm_manager
   local gpu_count
   gpu_count="$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l | tr -d ' ')"
   [[ "${gpu_count}" == "8" ]] || { echo "ERROR: expected 8 GPUs, found ${gpu_count}" >&2; exit 2; }
@@ -170,6 +134,10 @@ runtime_preflight() {
   fi
 
   nvidia-smi --query-gpu=index,name,memory.total,compute_cap --format=csv,noheader
+  env -u PYTHONHOME -u CONDA_PREFIX \
+    PYTHONPATH="$(eval_pythonpath)" \
+    "${ENV_DIR}/bin/python" "${REPO}/scripts/math/unified_env/verify_unified_math_env.py" \
+      --profile opsd --prefix "${ENV_DIR}" --repo "${REPO}" --gpu-smoke
   PYTHONPATH="$(eval_pythonpath)" "${ENV_DIR}/bin/python" - <<'PY'
 import importlib
 import os
@@ -180,7 +148,7 @@ import torch
 from flash_attn import flash_attn_func
 
 assert torch.cuda.device_count() == 8, torch.cuda.device_count()
-assert Path(os.environ["CORE_RUNTIME"]) in Path(torch.__file__).resolve().parents, torch.__file__
+assert Path(os.environ["ENV_DIR"]).resolve() in Path(torch.__file__).resolve().parents, torch.__file__
 for index in range(8):
     name = torch.cuda.get_device_name(index)
     capability = torch.cuda.get_device_capability(index)
@@ -190,7 +158,7 @@ for module in ("accelerate.utils.dataclasses", "datasets", "deepspeed.runtime.en
     imported = importlib.import_module(module)
     print(f"{module}: {Path(imported.__file__).resolve()}")
 assert flash_attn.__version__ == "2.8.3", flash_attn.__version__
-manager = Path(os.environ["CORE_RUNTIME"]) / "torch/bin/torch_shm_manager"
+manager = Path(torch.__file__).resolve().parent / "bin/torch_shm_manager"
 assert manager.is_file() and os.access(manager, os.X_OK), manager
 q = torch.randn((1, 16, 4, 64), device="cuda", dtype=torch.bfloat16)
 out = flash_attn_func(q, q, q, causal=True)

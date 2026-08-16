@@ -4,7 +4,7 @@ set -Eeuo pipefail
 SELF_REFERENCE_WEIGHT="${1:?Usage: $0 SELF_REFERENCE_WEIGHT}"
 ROOT="${ROOT:-/media/damoxing/che-liu-fileset/ylong/sdpo}"
 REPO="${REPO:-${ROOT}/code/distIL-sr-opsd-renyi}"
-ENV_DIR="${ENV_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/envs/verl-vllm010-h200-v2}"
+ENV_DIR="${ENV_DIR:-/media/damoxing/che-liu-fileset/ylong/sdpo/envs/math-verl-current}"
 MODEL_PATH="${MODEL_PATH:-/media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-8B}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/sr_opsd_math_refw_sweep30}"
 RUN_NAME="sr-opsd-8b-seed0-rho0.95-refw${SELF_REFERENCE_WEIGHT}-sync0-lr5e-6-tok8192-steps30-native-sdpo"

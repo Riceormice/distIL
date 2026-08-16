@@ -9,12 +9,9 @@ esac
 
 ROOT="${ROOT:-/media/damoxing/che-liu-fileset/ylong/sdpo}"
 REPO="${REPO:-${ROOT}/code/distIL-sr-opsd-renyi}"
-ENV_DIR="${ENV_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/envs/verl-vllm010-h200-v2}"
-PYTHON_BIN="${PYTHON_BIN:-${ENV_DIR}/bin/python}"
-DEPENDENCY_REPAIR_OVERLAY="${MATH_DEPENDENCY_REPAIR_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_dependency_repair_20260816}"
-TORCH_SHM_MANAGER_ASSET="${TORCH_SHM_MANAGER_ASSET:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets/torch2.8/torch_shm_manager.compat}"
-FLASH_SOURCE="${FLASH_SOURCE:-/media/vlm-ckp-fileset/ylong/sdpo/build/flash-attn-sm90/src}"
-NATIVE_HF_OVERLAY="${MATH_NATIVE_VERL_HF_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_native_verl_hf_20260817}"
+UNIFIED_ENV_ACTIVATE="${REPO}/scripts/math/unified_env/activate_unified_math_env.sh"
+source "${UNIFIED_ENV_ACTIVATE}" verl
+PYTHON_BIN="${ENV_DIR}/bin/python"
 MODEL_SIZE="${MODEL_SIZE:-8b}"
 HARDWARE="${HARDWARE:-h200}"
 case "${MODEL_SIZE}" in
@@ -30,8 +27,6 @@ MODEL_PATH="${MODEL_PATH:-${DEFAULT_MODEL_PATH}}"
 MATH_EVAL_DATA_ROOT="${MATH_EVAL_DATA_ROOT:-${ROOT}/data/math_eval}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/math_train_eval5_n16_h200_20260812}"
 SITE_PACKAGES="${ENV_DIR}/lib/python3.11/site-packages"
-NATIVE_RUNTIME_OVERLAY="${NATIVE_RUNTIME_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_native_verl_${HARDWARE}}"
-FLASH_PACKAGE_OVERLAY="${NATIVE_RUNTIME_OVERLAY}/flash_attn_2_8_3"
 
 VAL_N=16
 MAX_STEPS=100
@@ -69,18 +64,11 @@ MERGED_ROOT="${RUN_ROOT}/merged"
 LOG_ROOT="${RUN_ROOT}/logs"
 STATE_ROOT="${RUN_ROOT}/state"
 
-unset PYTHONHOME CONDA_PREFIX
-export PATH="${ENV_DIR}/bin:/usr/local/cuda/bin:/usr/bin:/bin:${PATH:-}"
-export LD_LIBRARY_PATH="${ENV_DIR}/lib:${LD_LIBRARY_PATH:-}"
-if [[ -f "${DEPENDENCY_REPAIR_OVERLAY}/.complete" ]]; then
-  export PYTHONPATH="${NATIVE_HF_OVERLAY}:${FLASH_PACKAGE_OVERLAY}:${REPO}/SDPO:${REPO}:${DEPENDENCY_REPAIR_OVERLAY}"
-else
-  export PYTHONPATH="${NATIVE_HF_OVERLAY}:${FLASH_PACKAGE_OVERLAY}:${REPO}/SDPO:${REPO}"
-fi
+export PYTHONPATH="${REPO}/SDPO:${REPO}"
 export PYTHON_BIN
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 export PYTHONUNBUFFERED=1
-export SETUPTOOLS_USE_DISTUTILS=stdlib
+unset SETUPTOOLS_USE_DISTUTILS
 export TOKENIZERS_PARALLELISM=false
 export HF_HOME="${HF_HOME:-/media/vlm-ckp-fileset/ylong/sdpo/cache/huggingface}"
 export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-/media/vlm-ckp-fileset/ylong/sdpo/cache/datasets}"
@@ -111,27 +99,21 @@ report_error() {
 trap report_error ERR
 
 test -x "${PYTHON_BIN}"
-test -f "${TORCH_SHM_MANAGER_ASSET}"
-test -f "${FLASH_SOURCE}/flash_attn/__init__.py"
-test -f "${SITE_PACKAGES}/flash_attn_2_cuda.cpython-311-x86_64-linux-gnu.so"
-test -f "${NATIVE_HF_OVERLAY}/.complete"
-test -f "${NATIVE_HF_OVERLAY}/transformers/__init__.py"
-test -f "${NATIVE_HF_OVERLAY}/tokenizers/__init__.py"
-test -f "${NATIVE_HF_OVERLAY}/vllm/version.py"
-test -f "${NATIVE_HF_OVERLAY}/vllm/_C.abi3.so"
-compgen -G "${NATIVE_HF_OVERLAY}/tokenizers/tokenizers*.so" >/dev/null
+test -f "${ENV_DIR}/.math-env-complete"
+test -x "${SITE_PACKAGES}/torch/bin/torch_shm_manager"
+test -f "${SITE_PACKAGES}/flash_attn/__init__.py"
+compgen -G "${SITE_PACKAGES}/flash_attn_2_cuda*.so" >/dev/null
+test -f "${SITE_PACKAGES}/transformers/__init__.py"
+test -f "${SITE_PACKAGES}/tokenizers/__init__.py"
+test -f "${SITE_PACKAGES}/vllm/version.py"
+compgen -G "${SITE_PACKAGES}/vllm/_C*.so" >/dev/null
 test -f "${MODEL_PATH}/config.json"
 test -f "${REPO}/SDPO/datasets/math_probs/train.json"
 test -f "${REPO}/SDPO/datasets/math_probs/test.json"
 test -f "${REPO}/SDPO/run_local_math_verl.sh"
 test -f "${REPO}/scripts/math/eval_sr_opsd_verl_math.sh"
 test -f "${REPO}/scripts/math/validate_math_eval.py"
-mkdir -p "${FLASH_PACKAGE_OVERLAY}" "${RUN_DIR}" "${RESULT_ROOT}" "${MERGED_ROOT}"
-if [[ -e "${FLASH_PACKAGE_OVERLAY}/flash_attn" && ! -L "${FLASH_PACKAGE_OVERLAY}/flash_attn" ]]; then
-  echo "ERROR: native VERL FlashAttention overlay exists and is not a symlink" >&2
-  exit 2
-fi
-ln -sfn "${FLASH_SOURCE}/flash_attn" "${FLASH_PACKAGE_OVERLAY}/flash_attn"
+mkdir -p "${RUN_DIR}" "${RESULT_ROOT}" "${MERGED_ROOT}"
 
 exec 9>"${STATE_ROOT}/pipeline.lock"
 flock -n 9 || { echo "ERROR: ${METHOD_LABEL} pipeline is already running: ${RUN_ROOT}" >&2; exit 3; }
@@ -214,19 +196,7 @@ wait_for_gpu_release() {
   return 1
 }
 
-repair_torch_shm_manager() {
-  local target="${ENV_DIR}/lib/python3.11/site-packages/torch/bin/torch_shm_manager"
-  if [[ ! -x "${target}" ]] || ! cmp -s "${TORCH_SHM_MANAGER_ASSET}" "${target}"; then
-    mkdir -p "$(dirname "${target}")"
-    local temporary="${target}.repair.$$"
-    install -m 0555 "${TORCH_SHM_MANAGER_ASSET}" "${temporary}"
-    mv -f "${temporary}" "${target}"
-    echo "Restored native VERL torch_shm_manager: ${target}"
-  fi
-}
-
 runtime_preflight() {
-  repair_torch_shm_manager
   local gpu_count
   gpu_count="$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l | tr -d ' ')"
   [[ "${gpu_count}" == "8" ]] || { echo "ERROR: expected 8 GPUs, found ${gpu_count}" >&2; exit 2; }
@@ -245,6 +215,11 @@ runtime_preflight() {
       ;;
   esac
   nvidia-smi --query-gpu=index,name,memory.total,compute_cap --format=csv,noheader
+
+  env -u PYTHONHOME -u CONDA_PREFIX \
+    PYTHONPATH="${REPO}/SDPO:${REPO}" \
+    "${PYTHON_BIN}" "${REPO}/scripts/math/unified_env/verify_unified_math_env.py" \
+      --profile verl --prefix "${ENV_DIR}" --repo "${REPO}" --gpu-smoke
 
   HARDWARE="${HARDWARE}" "${PYTHON_BIN}" - <<'PY'
 import importlib

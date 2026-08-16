@@ -4,7 +4,7 @@ set -Eeuo pipefail
 PROFILE="${1:?Usage: $0 table_aligned|github_original}"
 ROOT="${ROOT:-/media/damoxing/che-liu-fileset/ylong/sdpo}"
 REPO="${REPO:-${ROOT}/code/distIL-sr-opsd-renyi}"
-ENV_DIR="${ENV_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/envs/verl-vllm010-h200-v2}"
+ENV_DIR="${ENV_DIR:-/media/damoxing/che-liu-fileset/ylong/sdpo/envs/math-verl-current}"
 PYTHON_BIN="${PYTHON_BIN:-${ENV_DIR}/bin/python}"
 MODEL_PATH="${MODEL_PATH:-/media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-8B}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/sr_opsd_math_protocol_compare_20260811}"
