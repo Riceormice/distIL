@@ -20,3 +20,7 @@ The build marker is written only after `pip check`, package-origin checks,
 shared-memory checks, a Ray worker check, and the optional GPU FlashAttention
 smoke test pass. To replace an existing build, use a new `BUILD_ID`; do not
 modify an active versioned environment in place.
+
+The builder uses a complete local FlashAttention source tree when available.
+If the configured path only contains an extracted package fragment, it installs
+and compiles `flash-attn==2.8.3` from the package index instead.

@@ -62,10 +62,13 @@ echo "log=${LOG}"
 
 [[ -x "${CONDA_BIN}" ]] || { echo "ERROR: conda is missing: ${CONDA_BIN}" >&2; exit 2; }
 [[ -f "${REQUIREMENTS}" ]] || { echo "ERROR: requirements are missing: ${REQUIREMENTS}" >&2; exit 2; }
-[[ -f "${FLASH_ATTN_SOURCE}/setup.py" || -f "${FLASH_ATTN_SOURCE}/pyproject.toml" ]] || {
-  echo "ERROR: FlashAttention source is incomplete: ${FLASH_ATTN_SOURCE}" >&2
-  exit 2
-}
+if [[ -f "${FLASH_ATTN_SOURCE}/setup.py" || -f "${FLASH_ATTN_SOURCE}/pyproject.toml" ]]; then
+  FLASH_ATTN_SPEC="${FLASH_ATTN_SOURCE}"
+  echo "FlashAttention source: ${FLASH_ATTN_SPEC}"
+else
+  FLASH_ATTN_SPEC="flash-attn==2.8.3"
+  echo "Local FlashAttention tree is not installable; using ${FLASH_ATTN_SPEC} from the package index"
+fi
 
 if [[ -f "${TARGET}/.math-env-complete" && "${REBUILD:-0}" != "1" ]]; then
   echo "Environment already complete; validating before activation"
@@ -88,7 +91,7 @@ else
     CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}" \
     TORCH_CUDA_ARCH_LIST="8.0;9.0" \
     MAX_JOBS="${MAX_JOBS}" \
-    "${TARGET}/bin/python" -m pip install --no-build-isolation --no-deps "${FLASH_ATTN_SOURCE}"
+    "${TARGET}/bin/python" -m pip install --no-build-isolation --no-deps "${FLASH_ATTN_SPEC}"
 
   env -u PYTHONHOME -u PYTHONPATH -u CONDA_PREFIX \
     PYTHONNOUSERSITE=1 \
@@ -108,7 +111,7 @@ else
     echo "repo_commit=$(git -C "${REPO}" rev-parse HEAD)"
     echo "python=$(${TARGET}/bin/python -V 2>&1)"
     echo "torch_index=${TORCH_INDEX}"
-    echo "flash_attn_source=${FLASH_ATTN_SOURCE}"
+    echo "flash_attn_source=${FLASH_ATTN_SPEC}"
     echo "cuda_arch_list=8.0;9.0"
   } >"${TARGET}/math-env-manifest.txt"
   touch "${TARGET}/.math-env-complete"
