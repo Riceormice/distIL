@@ -17,6 +17,7 @@ CONDA_ROOT="${CONDA_ROOT:-/media/damoxing/che-liu-fileset/conda}"
 SITE_PACKAGES="${ENV_DIR}/lib/python3.11/site-packages"
 RUNTIME_OVERLAY="${RUNTIME_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_train_eval5_n16_a800_4b}"
 FLASH_PACKAGE_OVERLAY="${RUNTIME_OVERLAY}/flash_attn_2_8_3"
+DEPENDENCY_REPAIR_OVERLAY="${MATH_DEPENDENCY_REPAIR_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_dependency_repair_20260816}"
 
 if [[ -z "${BASE_MODEL_DIR:-}" ]]; then
   for candidate in \
@@ -51,6 +52,7 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/math_4b_train_eval5_n16
 TORCH_EXTENSIONS_DIR="${TORCH_EXTENSIONS_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_extensions/math-torch-a800-v1}"
 
 export ROOT REPO BASELINE_REPO BASELINE_OPSD ENV_DIR CORE_RUNTIME
+export DEPENDENCY_REPAIR_OVERLAY
 export PYTHON_EXTRAS PYTHON_COMPLETE VLLM_COMPLETE TORCH_SHM_MANAGER_ASSET
 export TORCH_HEADER_ROOT TORCH_CXX_HEADER_ROOT FLASH_SOURCE CONDA_ROOT
 export SITE_PACKAGES RUNTIME_OVERLAY FLASH_PACKAGE_OVERLAY
@@ -131,11 +133,11 @@ for script in "${BASELINE_OPSD}/opsd_train.py"; do
 done
 
 distil_pythonpath() {
-  printf '%s' "${FLASH_PACKAGE_OVERLAY}:${BASELINE_OPSD}:${BASELINE_REPO}:${PYTHON_EXTRAS}:${VLLM_COMPLETE}:${PYTHON_COMPLETE}:${CORE_RUNTIME}:${SITE_PACKAGES}"
+  printf '%s' "${DEPENDENCY_REPAIR_OVERLAY}:${FLASH_PACKAGE_OVERLAY}:${BASELINE_OPSD}:${BASELINE_REPO}:${PYTHON_EXTRAS}:${VLLM_COMPLETE}:${PYTHON_COMPLETE}:${CORE_RUNTIME}:${SITE_PACKAGES}"
 }
 
 eval_pythonpath() {
-  printf '%s' "${FLASH_PACKAGE_OVERLAY}:${REPO}/OPSD:${REPO}:${PYTHON_EXTRAS}:${VLLM_COMPLETE}:${PYTHON_COMPLETE}:${CORE_RUNTIME}:${SITE_PACKAGES}"
+  printf '%s' "${DEPENDENCY_REPAIR_OVERLAY}:${FLASH_PACKAGE_OVERLAY}:${REPO}/OPSD:${REPO}:${PYTHON_EXTRAS}:${VLLM_COMPLETE}:${PYTHON_COMPLETE}:${CORE_RUNTIME}:${SITE_PACKAGES}"
 }
 
 repair_torch_shm_manager() {
@@ -198,7 +200,7 @@ for index in range(8):
     name = torch.cuda.get_device_name(index)
     capability = torch.cuda.get_device_capability(index)
     assert capability == (8, 0), (index, name, capability)
-for name in ("datasets", "flash_attn", "math_verify", "ray", "transformers", "trl", "vllm"):
+for name in ("accelerate.utils.dataclasses", "datasets", "deepspeed.runtime.engine", "flash_attn", "math_verify", "ray", "transformers", "trl", "vllm"):
     module = importlib.import_module(name)
     print(f"{name}: {getattr(module, '__file__', '<namespace>')}")
 q = torch.randn((1, 16, 4, 64), device="cuda", dtype=torch.bfloat16)

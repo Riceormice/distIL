@@ -11,6 +11,7 @@ ROOT="${ROOT:-/media/damoxing/che-liu-fileset/ylong/sdpo}"
 REPO="${REPO:-${ROOT}/code/distIL-sr-opsd-renyi}"
 ENV_DIR="${ENV_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/envs/verl-vllm010-h200-v2}"
 PYTHON_BIN="${PYTHON_BIN:-${ENV_DIR}/bin/python}"
+DEPENDENCY_REPAIR_OVERLAY="${MATH_DEPENDENCY_REPAIR_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_dependency_repair_20260816}"
 MODEL_SIZE="${MODEL_SIZE:-8b}"
 HARDWARE="${HARDWARE:-h200}"
 case "${MODEL_SIZE}" in
@@ -65,7 +66,11 @@ STATE_ROOT="${RUN_ROOT}/state"
 unset PYTHONHOME CONDA_PREFIX
 export PATH="${ENV_DIR}/bin:/usr/local/cuda/bin:/usr/bin:/bin:${PATH:-}"
 export LD_LIBRARY_PATH="${ENV_DIR}/lib:${LD_LIBRARY_PATH:-}"
-export PYTHONPATH="${REPO}/SDPO:${REPO}"
+if [[ -f "${DEPENDENCY_REPAIR_OVERLAY}/.complete" ]]; then
+  export PYTHONPATH="${REPO}/SDPO:${REPO}:${DEPENDENCY_REPAIR_OVERLAY}"
+else
+  export PYTHONPATH="${REPO}/SDPO:${REPO}"
+fi
 export PYTHON_BIN
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 export PYTHONUNBUFFERED=1
@@ -208,7 +213,7 @@ for index in range(8):
     name = torch.cuda.get_device_name(index)
     capability = torch.cuda.get_device_capability(index)
     assert capability == expected_capability, (index, name, capability, expected_capability)
-for module in ("flash_attn", "ray", "transformers", "vllm", "verl"):
+for module in ("flash_attn", "ray", "ray._common.utils", "transformers", "vllm", "verl"):
     imported = importlib.import_module(module)
     print(f"{module}: {getattr(imported, '__file__', '<namespace>')}")
 q = torch.randn((1, 16, 4, 64), device="cuda", dtype=torch.bfloat16)

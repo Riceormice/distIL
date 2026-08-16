@@ -18,6 +18,7 @@ CONDA_ROOT="${CONDA_ROOT:-/media/damoxing/che-liu-fileset/conda}"
 SITE_PACKAGES="${ENV_DIR}/lib/python3.11/site-packages"
 RUNTIME_OVERLAY="${RUNTIME_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_train_eval5_n16_h200}"
 FLASH_PACKAGE_OVERLAY="${RUNTIME_OVERLAY}/flash_attn_2_8_3"
+DEPENDENCY_REPAIR_OVERLAY="${MATH_DEPENDENCY_REPAIR_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_dependency_repair_20260816}"
 
 BASE_MODEL_DIR="${BASE_MODEL_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-8B}"
 MATH_TRAIN_DATA="${MATH_TRAIN_DATA:-${BASELINE_OPSD}/data/math/train.jsonl}"
@@ -25,6 +26,7 @@ MATH_EVAL_DATA_ROOT="${MATH_EVAL_DATA_ROOT:-${ROOT}/data/math_eval}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/math_train_eval5_n16_h200_20260812}"
 
 export ROOT REPO BASELINE_REPO BASELINE_OPSD ENV_DIR CORE_RUNTIME
+export DEPENDENCY_REPAIR_OVERLAY
 export PYTHON_EXTRAS PYTHON_COMPLETE VLLM_COMPLETE TORCH_SHM_MANAGER_ASSET
 export TORCH_HEADER_ROOT TORCH_CXX_HEADER_ROOT TORCH_EXTENSIONS_DIR
 export FLASH_SOURCE CONDA_ROOT SITE_PACKAGES RUNTIME_OVERLAY FLASH_PACKAGE_OVERLAY
@@ -115,11 +117,11 @@ repair_torch_shm_manager() {
 }
 
 distil_pythonpath() {
-  printf '%s' "${FLASH_PACKAGE_OVERLAY}:${BASELINE_OPSD}:${BASELINE_REPO}:${PYTHON_EXTRAS}:${VLLM_COMPLETE}:${PYTHON_COMPLETE}:${CORE_RUNTIME}:${SITE_PACKAGES}"
+  printf '%s' "${DEPENDENCY_REPAIR_OVERLAY}:${FLASH_PACKAGE_OVERLAY}:${BASELINE_OPSD}:${BASELINE_REPO}:${PYTHON_EXTRAS}:${VLLM_COMPLETE}:${PYTHON_COMPLETE}:${CORE_RUNTIME}:${SITE_PACKAGES}"
 }
 
 eval_pythonpath() {
-  printf '%s' "${FLASH_PACKAGE_OVERLAY}:${REPO}/OPSD:${REPO}:${PYTHON_EXTRAS}:${VLLM_COMPLETE}:${PYTHON_COMPLETE}:${CORE_RUNTIME}:${SITE_PACKAGES}"
+  printf '%s' "${DEPENDENCY_REPAIR_OVERLAY}:${FLASH_PACKAGE_OVERLAY}:${REPO}/OPSD:${REPO}:${PYTHON_EXTRAS}:${VLLM_COMPLETE}:${PYTHON_COMPLETE}:${CORE_RUNTIME}:${SITE_PACKAGES}"
 }
 
 ensure_deepspeed_cpu_adam() {
@@ -183,7 +185,7 @@ for index in range(8):
     capability = torch.cuda.get_device_capability(index)
     assert capability >= (9, 0), (index, name, capability)
     print(f"cuda:{index}: {name}, capability={capability}")
-for module in ("datasets", "math_verify", "ray.dag.compiled_dag_node", "transformers", "trl", "vllm"):
+for module in ("accelerate.utils.dataclasses", "datasets", "deepspeed.runtime.engine", "math_verify", "ray.dag.compiled_dag_node", "transformers", "trl", "vllm"):
     imported = importlib.import_module(module)
     print(f"{module}: {Path(imported.__file__).resolve()}")
 assert flash_attn.__version__ == "2.8.3", flash_attn.__version__
