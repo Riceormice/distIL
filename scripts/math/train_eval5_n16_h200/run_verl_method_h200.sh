@@ -96,6 +96,20 @@ unset SWANLAB_API_KEY SWANLAB_WORKSPACE SWANLAB_PROJECT
 unset WANDB_API_KEY WANDB_ENTITY WANDB_PROJECT
 unset PYTORCH_CUDA_ALLOC_CONF PYTORCH_ALLOC_CONF
 
+mkdir -p "${LOG_ROOT}" "${STATE_ROOT}"
+LAUNCH_LOG="${LOG_ROOT}/pipeline_$(date +%Y%m%d_%H%M%S).log"
+exec > >(tee -a "${LAUNCH_LOG}") 2>&1
+report_error() {
+  local status=$?
+  local line="${BASH_LINENO[0]:-unknown}"
+  local command="${BASH_COMMAND:-unknown}"
+  trap - ERR
+  echo "ERROR: native VERL pipeline failed: status=${status} line=${line} command=${command}" >&2
+  echo "log=${LAUNCH_LOG}" >&2
+  exit "${status}"
+}
+trap report_error ERR
+
 test -x "${PYTHON_BIN}"
 test -f "${TORCH_SHM_MANAGER_ASSET}"
 test -f "${FLASH_SOURCE}/flash_attn/__init__.py"
@@ -118,7 +132,7 @@ test -f "${REPO}/SDPO/datasets/math_probs/test.json"
 test -f "${REPO}/SDPO/run_local_math_verl.sh"
 test -f "${REPO}/scripts/math/eval_sr_opsd_verl_math.sh"
 test -f "${REPO}/scripts/math/validate_math_eval.py"
-mkdir -p "${FLASH_PACKAGE_OVERLAY}" "${RUN_DIR}" "${RESULT_ROOT}" "${MERGED_ROOT}" "${LOG_ROOT}" "${STATE_ROOT}"
+mkdir -p "${FLASH_PACKAGE_OVERLAY}" "${RUN_DIR}" "${RESULT_ROOT}" "${MERGED_ROOT}"
 if [[ -e "${FLASH_PACKAGE_OVERLAY}/flash_attn" && ! -L "${FLASH_PACKAGE_OVERLAY}/flash_attn" ]]; then
   echo "ERROR: native VERL FlashAttention overlay exists and is not a symlink" >&2
   exit 2
@@ -144,8 +158,6 @@ done
 
 exec 9>"${STATE_ROOT}/pipeline.lock"
 flock -n 9 || { echo "ERROR: ${METHOD_LABEL} pipeline is already running: ${RUN_ROOT}" >&2; exit 3; }
-LAUNCH_LOG="${LOG_ROOT}/pipeline_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee -a "${LAUNCH_LOG}") 2>&1
 
 cat >"${STATE_ROOT}/parameters.env" <<EOF
 method=${METHOD}
