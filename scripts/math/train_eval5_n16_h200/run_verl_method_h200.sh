@@ -14,6 +14,7 @@ PYTHON_BIN="${PYTHON_BIN:-${ENV_DIR}/bin/python}"
 DEPENDENCY_REPAIR_OVERLAY="${MATH_DEPENDENCY_REPAIR_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_dependency_repair_20260816}"
 TORCH_SHM_MANAGER_ASSET="${TORCH_SHM_MANAGER_ASSET:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets/torch2.8/torch_shm_manager.compat}"
 FLASH_SOURCE="${FLASH_SOURCE:-/media/vlm-ckp-fileset/ylong/sdpo/build/flash-attn-sm90/src}"
+HF_STACK_ROOT="${HF_STACK_ROOT:-/media/vlm-ckp-fileset/ylong/sdpo/envs/verl-vllm010-official/lib/python3.11/site-packages}"
 MODEL_SIZE="${MODEL_SIZE:-8b}"
 HARDWARE="${HARDWARE:-h200}"
 case "${MODEL_SIZE}" in
@@ -99,6 +100,18 @@ test -x "${PYTHON_BIN}"
 test -f "${TORCH_SHM_MANAGER_ASSET}"
 test -f "${FLASH_SOURCE}/flash_attn/__init__.py"
 test -f "${SITE_PACKAGES}/flash_attn_2_cuda.cpython-311-x86_64-linux-gnu.so"
+test -f "${HF_STACK_ROOT}/transformers/__init__.py"
+test -f "${HF_STACK_ROOT}/tokenizers/__init__.py"
+for pattern in \
+  "${HF_STACK_ROOT}/transformers-*.dist-info" \
+  "${HF_STACK_ROOT}/tokenizers-*.dist-info" \
+  "${HF_STACK_ROOT}/tokenizers/tokenizers*.so"
+do
+  compgen -G "${pattern}" >/dev/null || {
+    echo "ERROR: incomplete native VERL HF stack: ${pattern}" >&2
+    exit 2
+  }
+done
 test -f "${MODEL_PATH}/config.json"
 test -f "${REPO}/SDPO/datasets/math_probs/train.json"
 test -f "${REPO}/SDPO/datasets/math_probs/test.json"
@@ -111,6 +124,23 @@ if [[ -e "${FLASH_PACKAGE_OVERLAY}/flash_attn" && ! -L "${FLASH_PACKAGE_OVERLAY}
   exit 2
 fi
 ln -sfn "${FLASH_SOURCE}/flash_attn" "${FLASH_PACKAGE_OVERLAY}/flash_attn"
+for package in transformers tokenizers; do
+  if [[ -e "${FLASH_PACKAGE_OVERLAY}/${package}" && ! -L "${FLASH_PACKAGE_OVERLAY}/${package}" ]]; then
+    echo "ERROR: native VERL ${package} overlay exists and is not a symlink" >&2
+    exit 2
+  fi
+  ln -sfn "${HF_STACK_ROOT}/${package}" "${FLASH_PACKAGE_OVERLAY}/${package}"
+done
+find "${FLASH_PACKAGE_OVERLAY}" -maxdepth 1 -type l \
+  \( -name 'transformers-*.dist-info' -o -name 'tokenizers-*.dist-info' \) \
+  -delete
+for metadata_dir in \
+  "${HF_STACK_ROOT}"/transformers-*.dist-info \
+  "${HF_STACK_ROOT}"/tokenizers-*.dist-info
+do
+  [[ -d "${metadata_dir}" ]] || continue
+  ln -s "${metadata_dir}" "${FLASH_PACKAGE_OVERLAY}/$(basename "${metadata_dir}")"
+done
 
 exec 9>"${STATE_ROOT}/pipeline.lock"
 flock -n 9 || { echo "ERROR: ${METHOD_LABEL} pipeline is already running: ${RUN_ROOT}" >&2; exit 3; }
@@ -243,6 +273,8 @@ for index in range(8):
 for module in ("flash_attn", "ray", "ray._common.utils", "transformers", "vllm", "verl"):
     imported = importlib.import_module(module)
     print(f"{module}: {getattr(imported, '__file__', '<namespace>')}")
+import tokenizers
+print(f"tokenizers={tokenizers.__version__}: {tokenizers.__file__}")
 mp.set_sharing_strategy("file_system")
 torch.zeros(1).share_memory_()
 q = torch.randn((1, 16, 4, 64), device="cuda", dtype=torch.bfloat16)
