@@ -25,3 +25,5 @@ The builder uses a complete local FlashAttention source tree when available.
 If the configured path only contains an extracted package fragment, it installs
 and compiles `flash-attn==2.8.3` from the package index instead. The build is
 forced locally so it does not depend on GitHub release-wheel availability.
+An interrupted build with an intact `bin/python` can be continued with
+`RESUME_BUILD=1`; use `REBUILD=1` only when the partial target must be replaced.

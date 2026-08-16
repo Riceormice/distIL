@@ -73,15 +73,26 @@ fi
 if [[ -f "${TARGET}/.math-env-complete" && "${REBUILD:-0}" != "1" ]]; then
   echo "Environment already complete; validating before activation"
 else
+  CREATE_TARGET=1
   if [[ -e "${TARGET}" ]]; then
-    [[ "${REBUILD:-0}" == "1" ]] || {
+    if [[ "${RESUME_BUILD:-0}" == "1" ]]; then
+      [[ -x "${TARGET}/bin/python" ]] || {
+        echo "ERROR: incomplete target has no usable Python; rebuild it with REBUILD=1: ${TARGET}" >&2
+        exit 2
+      }
+      CREATE_TARGET=0
+      echo "Resuming incomplete environment: ${TARGET}"
+    elif [[ "${REBUILD:-0}" == "1" ]]; then
+      rm -rf -- "${TARGET}"
+    else
       echo "ERROR: incomplete target exists; rerun with REBUILD=1 after confirming no job uses it: ${TARGET}" >&2
       exit 2
-    }
-    rm -rf -- "${TARGET}"
+    fi
   fi
 
-  retry "${CONDA_BIN}" create --yes --copy --prefix "${TARGET}" python=3.11 pip setuptools wheel
+  if [[ "${CREATE_TARGET}" == "1" ]]; then
+    retry "${CONDA_BIN}" create --yes --copy --prefix "${TARGET}" python=3.11 pip setuptools wheel
+  fi
   export PIP_CACHE_DIR PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_INPUT=1
   retry "${TARGET}/bin/python" -m pip install --upgrade pip setuptools wheel ninja packaging psutil
   retry "${TARGET}/bin/python" -m pip install --index-url "${TORCH_INDEX}" "${TORCH_PACKAGES[@]}"
