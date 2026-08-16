@@ -32,9 +32,10 @@ PYTHONPATH="${DEPENDENCY_REPAIR_OVERLAY}" \
     --upgrade \
     --target "${TEMP}" \
     'transformers==4.57.1' \
-    'tokenizers==0.22.2'
+    'tokenizers==0.22.2' \
+    'vllm==0.10.0'
 
-echo "===== Native VERL HF validation ====="
+echo "===== Native VERL package validation ====="
 env -u PYTHONHOME -u CONDA_PREFIX \
   PYTHONNOUSERSITE=1 \
   PYTHONPATH="${TEMP}:${DEPENDENCY_REPAIR_OVERLAY}:${REPO}/SDPO:${REPO}" \
@@ -44,19 +45,29 @@ from pathlib import Path
 
 import tokenizers
 import transformers
+import vllm
+import vllm._C
+import vllm.version
+from vllm.v1.engine.utils import CoreEngineProcManager
 
 assert transformers.__version__ == "4.57.1", transformers.__version__
 assert tokenizers.__version__ == "0.22.2", tokenizers.__version__
+assert vllm.__version__ == "0.10.0", vllm.__version__
 assert version("transformers") == "4.57.1", version("transformers")
 assert version("tokenizers") == "0.22.2", version("tokenizers")
+assert version("vllm") == "0.10.0", version("vllm")
 assert any(Path(tokenizers.__file__).parent.glob("tokenizers*.so"))
 print(f"transformers={transformers.__version__} {Path(transformers.__file__).resolve()}")
 print(f"tokenizers={tokenizers.__version__} {Path(tokenizers.__file__).resolve()}")
+print(f"vllm={vllm.__version__} {Path(vllm.__file__).resolve()}")
+print(f"vllm._C={Path(vllm._C.__file__).resolve()}")
+print(f"CoreEngineProcManager={CoreEngineProcManager}")
 PY
 
 printf '%s\n' \
   'transformers=4.57.1' \
   'tokenizers=0.22.2' \
+  'vllm=0.10.0' \
   >"${TEMP}/versions.env"
 touch "${TEMP}/.complete"
 

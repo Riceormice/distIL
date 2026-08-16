@@ -117,6 +117,8 @@ test -f "${SITE_PACKAGES}/flash_attn_2_cuda.cpython-311-x86_64-linux-gnu.so"
 test -f "${NATIVE_HF_OVERLAY}/.complete"
 test -f "${NATIVE_HF_OVERLAY}/transformers/__init__.py"
 test -f "${NATIVE_HF_OVERLAY}/tokenizers/__init__.py"
+test -f "${NATIVE_HF_OVERLAY}/vllm/version.py"
+test -f "${NATIVE_HF_OVERLAY}/vllm/_C.abi3.so"
 compgen -G "${NATIVE_HF_OVERLAY}/tokenizers/tokenizers*.so" >/dev/null
 test -f "${MODEL_PATH}/config.json"
 test -f "${REPO}/SDPO/datasets/math_probs/train.json"
