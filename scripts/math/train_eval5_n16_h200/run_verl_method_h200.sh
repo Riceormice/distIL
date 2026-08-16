@@ -13,6 +13,7 @@ ENV_DIR="${ENV_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/envs/verl-vllm010-h200-v2}
 PYTHON_BIN="${PYTHON_BIN:-${ENV_DIR}/bin/python}"
 DEPENDENCY_REPAIR_OVERLAY="${MATH_DEPENDENCY_REPAIR_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_dependency_repair_20260816}"
 TORCH_SHM_MANAGER_ASSET="${TORCH_SHM_MANAGER_ASSET:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets/torch2.8/torch_shm_manager.compat}"
+FLASH_SOURCE="${FLASH_SOURCE:-/media/vlm-ckp-fileset/ylong/sdpo/build/flash-attn-sm90/src}"
 MODEL_SIZE="${MODEL_SIZE:-8b}"
 HARDWARE="${HARDWARE:-h200}"
 case "${MODEL_SIZE}" in
@@ -27,6 +28,9 @@ esac
 MODEL_PATH="${MODEL_PATH:-${DEFAULT_MODEL_PATH}}"
 MATH_EVAL_DATA_ROOT="${MATH_EVAL_DATA_ROOT:-${ROOT}/data/math_eval}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/math_train_eval5_n16_h200_20260812}"
+SITE_PACKAGES="${ENV_DIR}/lib/python3.11/site-packages"
+NATIVE_RUNTIME_OVERLAY="${NATIVE_RUNTIME_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_native_verl_${HARDWARE}}"
+FLASH_PACKAGE_OVERLAY="${NATIVE_RUNTIME_OVERLAY}/flash_attn_2_8_3"
 
 VAL_N=16
 MAX_STEPS=100
@@ -68,9 +72,9 @@ unset PYTHONHOME CONDA_PREFIX
 export PATH="${ENV_DIR}/bin:/usr/local/cuda/bin:/usr/bin:/bin:${PATH:-}"
 export LD_LIBRARY_PATH="${ENV_DIR}/lib:${LD_LIBRARY_PATH:-}"
 if [[ -f "${DEPENDENCY_REPAIR_OVERLAY}/.complete" ]]; then
-  export PYTHONPATH="${REPO}/SDPO:${REPO}:${DEPENDENCY_REPAIR_OVERLAY}"
+  export PYTHONPATH="${FLASH_PACKAGE_OVERLAY}:${REPO}/SDPO:${REPO}:${DEPENDENCY_REPAIR_OVERLAY}"
 else
-  export PYTHONPATH="${REPO}/SDPO:${REPO}"
+  export PYTHONPATH="${FLASH_PACKAGE_OVERLAY}:${REPO}/SDPO:${REPO}"
 fi
 export PYTHON_BIN
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
@@ -93,13 +97,20 @@ unset PYTORCH_CUDA_ALLOC_CONF PYTORCH_ALLOC_CONF
 
 test -x "${PYTHON_BIN}"
 test -f "${TORCH_SHM_MANAGER_ASSET}"
+test -f "${FLASH_SOURCE}/flash_attn/__init__.py"
+test -f "${SITE_PACKAGES}/flash_attn_2_cuda.cpython-311-x86_64-linux-gnu.so"
 test -f "${MODEL_PATH}/config.json"
 test -f "${REPO}/SDPO/datasets/math_probs/train.json"
 test -f "${REPO}/SDPO/datasets/math_probs/test.json"
 test -f "${REPO}/SDPO/run_local_math_verl.sh"
 test -f "${REPO}/scripts/math/eval_sr_opsd_verl_math.sh"
 test -f "${REPO}/scripts/math/validate_math_eval.py"
-mkdir -p "${RUN_DIR}" "${RESULT_ROOT}" "${MERGED_ROOT}" "${LOG_ROOT}" "${STATE_ROOT}"
+mkdir -p "${FLASH_PACKAGE_OVERLAY}" "${RUN_DIR}" "${RESULT_ROOT}" "${MERGED_ROOT}" "${LOG_ROOT}" "${STATE_ROOT}"
+if [[ -e "${FLASH_PACKAGE_OVERLAY}/flash_attn" && ! -L "${FLASH_PACKAGE_OVERLAY}/flash_attn" ]]; then
+  echo "ERROR: native VERL FlashAttention overlay exists and is not a symlink" >&2
+  exit 2
+fi
+ln -sfn "${FLASH_SOURCE}/flash_attn" "${FLASH_PACKAGE_OVERLAY}/flash_attn"
 
 exec 9>"${STATE_ROOT}/pipeline.lock"
 flock -n 9 || { echo "ERROR: ${METHOD_LABEL} pipeline is already running: ${RUN_ROOT}" >&2; exit 3; }
