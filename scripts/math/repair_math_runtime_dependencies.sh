@@ -61,7 +61,6 @@ select_root() {
 RAY_ROOT="$(select_root ray _common/utils.py true)"
 DEEPSPEED_ROOT="$(select_root deepspeed runtime/engine.py)"
 ACCELERATE_ROOT="$(select_root accelerate utils/dataclasses.py)"
-SIMPLEJSON_ROOT="$(select_root simplejson __init__.py)"
 
 TEMP="${OVERLAY}.tmp.$$"
 rm -rf -- "${TEMP}"
@@ -69,14 +68,22 @@ mkdir -p "${TEMP}"
 ln -s "${RAY_ROOT}/ray" "${TEMP}/ray"
 ln -s "${DEEPSPEED_ROOT}/deepspeed" "${TEMP}/deepspeed"
 ln -s "${ACCELERATE_ROOT}/accelerate" "${TEMP}/accelerate"
-ln -s "${SIMPLEJSON_ROOT}/simplejson" "${TEMP}/simplejson"
+mkdir -p "${TEMP}/simplejson"
+printf '%s\n' \
+  'from json import JSONDecodeError, JSONDecoder, JSONEncoder, dump, dumps, load, loads' \
+  '__all__ = ["JSONDecodeError", "JSONDecoder", "JSONEncoder", "dump", "dumps", "load", "loads"]' \
+  '__version__ = "stdlib-compat"' \
+  >"${TEMP}/simplejson/__init__.py"
+printf '%s\n' \
+  'from json import JSONDecodeError' \
+  '__all__ = ["JSONDecodeError"]' \
+  >"${TEMP}/simplejson/errors.py"
 
 # Keep package metadata consistent with the package code selected above.
 for package_spec in \
   "${RAY_ROOT}/ray-*.dist-info" \
   "${DEEPSPEED_ROOT}/deepspeed-*.dist-info" \
-  "${ACCELERATE_ROOT}/accelerate-*.dist-info" \
-  "${SIMPLEJSON_ROOT}/simplejson-*.dist-info"
+  "${ACCELERATE_ROOT}/accelerate-*.dist-info"
 do
   for metadata_dir in ${package_spec}; do
     [[ -d "${metadata_dir}" ]] || continue
@@ -87,7 +94,7 @@ done
 echo "ray_source=${RAY_ROOT}" >"${TEMP}/sources.env"
 echo "deepspeed_source=${DEEPSPEED_ROOT}" >>"${TEMP}/sources.env"
 echo "accelerate_source=${ACCELERATE_ROOT}" >>"${TEMP}/sources.env"
-echo "simplejson_source=${SIMPLEJSON_ROOT}" >>"${TEMP}/sources.env"
+echo "simplejson_source=stdlib_json_compat_shim" >>"${TEMP}/sources.env"
 
 echo "===== VERL Ray validation ====="
 env -u PYTHONHOME -u CONDA_PREFIX \
