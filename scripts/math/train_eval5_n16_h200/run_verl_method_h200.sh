@@ -14,7 +14,7 @@ PYTHON_BIN="${PYTHON_BIN:-${ENV_DIR}/bin/python}"
 DEPENDENCY_REPAIR_OVERLAY="${MATH_DEPENDENCY_REPAIR_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_dependency_repair_20260816}"
 TORCH_SHM_MANAGER_ASSET="${TORCH_SHM_MANAGER_ASSET:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets/torch2.8/torch_shm_manager.compat}"
 FLASH_SOURCE="${FLASH_SOURCE:-/media/vlm-ckp-fileset/ylong/sdpo/build/flash-attn-sm90/src}"
-HF_STACK_ROOT="${HF_STACK_ROOT:-/media/vlm-ckp-fileset/ylong/sdpo/envs/verl-vllm010-official/lib/python3.11/site-packages}"
+NATIVE_HF_OVERLAY="${MATH_NATIVE_VERL_HF_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_native_verl_hf_20260817}"
 MODEL_SIZE="${MODEL_SIZE:-8b}"
 HARDWARE="${HARDWARE:-h200}"
 case "${MODEL_SIZE}" in
@@ -73,9 +73,9 @@ unset PYTHONHOME CONDA_PREFIX
 export PATH="${ENV_DIR}/bin:/usr/local/cuda/bin:/usr/bin:/bin:${PATH:-}"
 export LD_LIBRARY_PATH="${ENV_DIR}/lib:${LD_LIBRARY_PATH:-}"
 if [[ -f "${DEPENDENCY_REPAIR_OVERLAY}/.complete" ]]; then
-  export PYTHONPATH="${FLASH_PACKAGE_OVERLAY}:${REPO}/SDPO:${REPO}:${DEPENDENCY_REPAIR_OVERLAY}"
+  export PYTHONPATH="${NATIVE_HF_OVERLAY}:${FLASH_PACKAGE_OVERLAY}:${REPO}/SDPO:${REPO}:${DEPENDENCY_REPAIR_OVERLAY}"
 else
-  export PYTHONPATH="${FLASH_PACKAGE_OVERLAY}:${REPO}/SDPO:${REPO}"
+  export PYTHONPATH="${NATIVE_HF_OVERLAY}:${FLASH_PACKAGE_OVERLAY}:${REPO}/SDPO:${REPO}"
 fi
 export PYTHON_BIN
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
@@ -114,18 +114,10 @@ test -x "${PYTHON_BIN}"
 test -f "${TORCH_SHM_MANAGER_ASSET}"
 test -f "${FLASH_SOURCE}/flash_attn/__init__.py"
 test -f "${SITE_PACKAGES}/flash_attn_2_cuda.cpython-311-x86_64-linux-gnu.so"
-test -f "${HF_STACK_ROOT}/transformers/__init__.py"
-test -f "${HF_STACK_ROOT}/tokenizers/__init__.py"
-for pattern in \
-  "${HF_STACK_ROOT}/transformers-*.dist-info" \
-  "${HF_STACK_ROOT}/tokenizers-*.dist-info" \
-  "${HF_STACK_ROOT}/tokenizers/tokenizers*.so"
-do
-  compgen -G "${pattern}" >/dev/null || {
-    echo "ERROR: incomplete native VERL HF stack: ${pattern}" >&2
-    exit 2
-  }
-done
+test -f "${NATIVE_HF_OVERLAY}/.complete"
+test -f "${NATIVE_HF_OVERLAY}/transformers/__init__.py"
+test -f "${NATIVE_HF_OVERLAY}/tokenizers/__init__.py"
+compgen -G "${NATIVE_HF_OVERLAY}/tokenizers/tokenizers*.so" >/dev/null
 test -f "${MODEL_PATH}/config.json"
 test -f "${REPO}/SDPO/datasets/math_probs/train.json"
 test -f "${REPO}/SDPO/datasets/math_probs/test.json"
@@ -138,23 +130,6 @@ if [[ -e "${FLASH_PACKAGE_OVERLAY}/flash_attn" && ! -L "${FLASH_PACKAGE_OVERLAY}
   exit 2
 fi
 ln -sfn "${FLASH_SOURCE}/flash_attn" "${FLASH_PACKAGE_OVERLAY}/flash_attn"
-for package in transformers tokenizers; do
-  if [[ -e "${FLASH_PACKAGE_OVERLAY}/${package}" && ! -L "${FLASH_PACKAGE_OVERLAY}/${package}" ]]; then
-    echo "ERROR: native VERL ${package} overlay exists and is not a symlink" >&2
-    exit 2
-  fi
-  ln -sfn "${HF_STACK_ROOT}/${package}" "${FLASH_PACKAGE_OVERLAY}/${package}"
-done
-find "${FLASH_PACKAGE_OVERLAY}" -maxdepth 1 -type l \
-  \( -name 'transformers-*.dist-info' -o -name 'tokenizers-*.dist-info' \) \
-  -delete
-for metadata_dir in \
-  "${HF_STACK_ROOT}"/transformers-*.dist-info \
-  "${HF_STACK_ROOT}"/tokenizers-*.dist-info
-do
-  [[ -d "${metadata_dir}" ]] || continue
-  ln -s "${metadata_dir}" "${FLASH_PACKAGE_OVERLAY}/$(basename "${metadata_dir}")"
-done
 
 exec 9>"${STATE_ROOT}/pipeline.lock"
 flock -n 9 || { echo "ERROR: ${METHOD_LABEL} pipeline is already running: ${RUN_ROOT}" >&2; exit 3; }
