@@ -89,6 +89,7 @@ else
 
   retry env \
     CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}" \
+    FLASH_ATTENTION_FORCE_BUILD=TRUE \
     TORCH_CUDA_ARCH_LIST="8.0;9.0" \
     MAX_JOBS="${MAX_JOBS}" \
     "${TARGET}/bin/python" -m pip install --no-build-isolation --no-deps "${FLASH_ATTN_SPEC}"
@@ -112,6 +113,7 @@ else
     echo "python=$(${TARGET}/bin/python -V 2>&1)"
     echo "torch_index=${TORCH_INDEX}"
     echo "flash_attn_source=${FLASH_ATTN_SPEC}"
+    echo "flash_attention_force_build=true"
     echo "cuda_arch_list=8.0;9.0"
   } >"${TARGET}/math-env-manifest.txt"
   touch "${TARGET}/.math-env-complete"

@@ -23,4 +23,5 @@ modify an active versioned environment in place.
 
 The builder uses a complete local FlashAttention source tree when available.
 If the configured path only contains an extracted package fragment, it installs
-and compiles `flash-attn==2.8.3` from the package index instead.
+and compiles `flash-attn==2.8.3` from the package index instead. The build is
+forced locally so it does not depend on GitHub release-wheel availability.
