@@ -12,6 +12,7 @@ REPO="${REPO:-${ROOT}/code/distIL-sr-opsd-renyi}"
 ENV_DIR="${ENV_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/envs/verl-vllm010-h200-v2}"
 PYTHON_BIN="${PYTHON_BIN:-${ENV_DIR}/bin/python}"
 DEPENDENCY_REPAIR_OVERLAY="${MATH_DEPENDENCY_REPAIR_OVERLAY:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_overlays/math_dependency_repair_20260816}"
+TORCH_SHM_MANAGER_ASSET="${TORCH_SHM_MANAGER_ASSET:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_assets/torch2.8/torch_shm_manager.compat}"
 MODEL_SIZE="${MODEL_SIZE:-8b}"
 HARDWARE="${HARDWARE:-h200}"
 case "${MODEL_SIZE}" in
@@ -91,6 +92,7 @@ unset WANDB_API_KEY WANDB_ENTITY WANDB_PROJECT
 unset PYTORCH_CUDA_ALLOC_CONF PYTORCH_ALLOC_CONF
 
 test -x "${PYTHON_BIN}"
+test -f "${TORCH_SHM_MANAGER_ASSET}"
 test -f "${MODEL_PATH}/config.json"
 test -f "${REPO}/SDPO/datasets/math_probs/train.json"
 test -f "${REPO}/SDPO/datasets/math_probs/test.json"
@@ -182,7 +184,19 @@ wait_for_gpu_release() {
   return 1
 }
 
+repair_torch_shm_manager() {
+  local target="${ENV_DIR}/lib/python3.11/site-packages/torch/bin/torch_shm_manager"
+  if [[ ! -x "${target}" ]] || ! cmp -s "${TORCH_SHM_MANAGER_ASSET}" "${target}"; then
+    mkdir -p "$(dirname "${target}")"
+    local temporary="${target}.repair.$$"
+    install -m 0555 "${TORCH_SHM_MANAGER_ASSET}" "${temporary}"
+    mv -f "${temporary}" "${target}"
+    echo "Restored native VERL torch_shm_manager: ${target}"
+  fi
+}
+
 runtime_preflight() {
+  repair_torch_shm_manager
   local gpu_count
   gpu_count="$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l | tr -d ' ')"
   [[ "${gpu_count}" == "8" ]] || { echo "ERROR: expected 8 GPUs, found ${gpu_count}" >&2; exit 2; }
@@ -206,6 +220,7 @@ runtime_preflight() {
 import importlib
 import os
 import torch
+import torch.multiprocessing as mp
 from flash_attn import flash_attn_func
 
 assert torch.cuda.device_count() == 8, torch.cuda.device_count()
@@ -217,6 +232,8 @@ for index in range(8):
 for module in ("flash_attn", "ray", "ray._common.utils", "transformers", "vllm", "verl"):
     imported = importlib.import_module(module)
     print(f"{module}: {getattr(imported, '__file__', '<namespace>')}")
+mp.set_sharing_strategy("file_system")
+torch.zeros(1).share_memory_()
 q = torch.randn((1, 16, 4, 64), device="cuda", dtype=torch.bfloat16)
 out = flash_attn_func(q, q, q, causal=True)
 torch.cuda.synchronize()
