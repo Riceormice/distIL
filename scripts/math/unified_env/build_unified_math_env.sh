@@ -105,7 +105,13 @@ else
     FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS}" \
     TORCH_CUDA_ARCH_LIST="8.0;9.0" \
     MAX_JOBS="${MAX_JOBS}" \
-    "${TARGET}/bin/python" -m pip install --no-build-isolation --no-deps "${FLASH_ATTN_SPEC}"
+    "${TARGET}/bin/python" -m pip install \
+      --no-cache-dir \
+      --no-binary=flash-attn \
+      --force-reinstall \
+      --no-build-isolation \
+      --no-deps \
+      "${FLASH_ATTN_SPEC}"
 
   env -u PYTHONHOME -u PYTHONPATH -u CONDA_PREFIX \
     PYTHONNOUSERSITE=1 \
@@ -127,6 +133,7 @@ else
     echo "torch_index=${TORCH_INDEX}"
     echo "flash_attn_source=${FLASH_ATTN_SPEC}"
     echo "flash_attention_force_build=true"
+    echo "flash_attention_wheel_cache=disabled"
     echo "flash_attn_cuda_archs=${FLASH_ATTN_CUDA_ARCHS}"
     echo "torch_cuda_arch_list=8.0;9.0"
   } >"${TARGET}/math-env-manifest.txt"
