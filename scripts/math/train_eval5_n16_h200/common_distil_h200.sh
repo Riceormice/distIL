@@ -52,7 +52,9 @@ export TOKENIZERS_PARALLELISM=false
 export PYTHONUNBUFFERED=1
 export HF_HOME="${HF_HOME:-/media/vlm-ckp-fileset/ylong/sdpo/cache/huggingface}"
 export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-/media/vlm-ckp-fileset/ylong/sdpo/cache/datasets}"
-export VLLM_USE_MODELSCOPE=true
+# Models and evaluation datasets are local. Enabling ModelScope makes vLLM
+# import the optional `modelscope` package before training starts.
+unset VLLM_USE_MODELSCOPE
 export VLLM_DISABLE_CUSTOM_ALL_REDUCE=1
 export NCCL_CUMEM_ENABLE=0
 export CUDA_DEVICE_MAX_CONNECTIONS=1
