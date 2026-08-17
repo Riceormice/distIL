@@ -25,5 +25,7 @@ The builder uses a complete local FlashAttention source tree when available.
 If the configured path only contains an extracted package fragment, it installs
 and compiles `flash-attn==2.8.3` from the package index instead. The build is
 forced locally so it does not depend on GitHub release-wheel availability.
+FlashAttention is compiled only for SM80 and SM90, covering A800 and H200/H20Z
+without spending time or disk space on unused SM100 and SM120 binaries.
 An interrupted build with an intact `bin/python` can be continued with
 `RESUME_BUILD=1`; use `REBUILD=1` only when the partial target must be replaced.

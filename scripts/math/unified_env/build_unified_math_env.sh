@@ -13,6 +13,7 @@ CONDA_BIN="${CONDA_BIN:-/media/damoxing/che-liu-fileset/conda/bin/conda}"
 ENV_HOME="${UNIFIED_ENV_HOME:-/media/damoxing/che-liu-fileset/ylong/sdpo/envs}"
 PIP_CACHE_DIR="${PIP_CACHE_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/cache/pip}"
 FLASH_ATTN_SOURCE="${FLASH_ATTN_SOURCE:-/media/vlm-ckp-fileset/ylong/sdpo/build/flash-attn-sm90/src}"
+FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS:-80;90}"
 BUILD_ID="${BUILD_ID:-20260817-v1}"
 MAX_JOBS="${MAX_JOBS:-4}"
 
@@ -101,6 +102,7 @@ else
   retry env \
     CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}" \
     FLASH_ATTENTION_FORCE_BUILD=TRUE \
+    FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS}" \
     TORCH_CUDA_ARCH_LIST="8.0;9.0" \
     MAX_JOBS="${MAX_JOBS}" \
     "${TARGET}/bin/python" -m pip install --no-build-isolation --no-deps "${FLASH_ATTN_SPEC}"
@@ -125,7 +127,8 @@ else
     echo "torch_index=${TORCH_INDEX}"
     echo "flash_attn_source=${FLASH_ATTN_SPEC}"
     echo "flash_attention_force_build=true"
-    echo "cuda_arch_list=8.0;9.0"
+    echo "flash_attn_cuda_archs=${FLASH_ATTN_CUDA_ARCHS}"
+    echo "torch_cuda_arch_list=8.0;9.0"
   } >"${TARGET}/math-env-manifest.txt"
   touch "${TARGET}/.math-env-complete"
 fi
