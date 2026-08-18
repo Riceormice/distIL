@@ -63,6 +63,9 @@ RESULT_ROOT="${RUN_ROOT}/evaluations"
 MERGED_ROOT="${RUN_ROOT}/merged"
 LOG_ROOT="${RUN_ROOT}/logs"
 STATE_ROOT="${RUN_ROOT}/state"
+KEEPALIVE_SCRIPT="${REPO}/scripts/math/adaptive_gpu_keepalive.py"
+KEEPALIVE_PIDS=()
+KEEPALIVE_STOP_FILE=""
 
 export PYTHONPATH="${REPO}/SDPO:${REPO}"
 export PYTHON_BIN
@@ -98,6 +101,20 @@ report_error() {
 }
 trap report_error ERR
 
+cleanup_pipeline() {
+  if [[ -n "${KEEPALIVE_STOP_FILE}" ]]; then
+    touch "${KEEPALIVE_STOP_FILE}" 2>/dev/null || true
+  fi
+  local pid
+  for pid in "${KEEPALIVE_PIDS[@]}"; do
+    wait "${pid}" 2>/dev/null || true
+  done
+  [[ -z "${KEEPALIVE_STOP_FILE}" ]] || rm -f -- "${KEEPALIVE_STOP_FILE}"
+}
+trap cleanup_pipeline EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 test -x "${PYTHON_BIN}"
 test -f "${ENV_DIR}/.math-env-complete"
 test -x "${SITE_PACKAGES}/torch/bin/torch_shm_manager"
@@ -113,6 +130,7 @@ test -f "${REPO}/SDPO/datasets/math_probs/test.json"
 test -f "${REPO}/SDPO/run_local_math_verl.sh"
 test -f "${REPO}/scripts/math/eval_sr_opsd_verl_math.sh"
 test -f "${REPO}/scripts/math/validate_math_eval.py"
+test -f "${KEEPALIVE_SCRIPT}"
 mkdir -p "${RUN_DIR}" "${RESULT_ROOT}" "${MERGED_ROOT}"
 
 exec 9>"${STATE_ROOT}/pipeline.lock"
@@ -184,8 +202,24 @@ remove_native_checkpoint() {
 
 wait_for_gpu_release() {
   local deadline=$((SECONDS + ${1:-240}))
+  local pid keepalive_pid is_keepalive
   while (( SECONDS < deadline )); do
-    if nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | grep -Eq '^[0-9]+'; then
+    local workload_found=0
+    while IFS= read -r pid; do
+      [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+      is_keepalive=0
+      for keepalive_pid in "${KEEPALIVE_PIDS[@]}"; do
+        if [[ "${pid}" == "${keepalive_pid}" ]]; then
+          is_keepalive=1
+          break
+        fi
+      done
+      if (( is_keepalive == 0 )); then
+        workload_found=1
+        break
+      fi
+    done < <(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | sort -u)
+    if (( workload_found == 1 )); then
       sleep 5
     else
       return 0
@@ -194,6 +228,54 @@ wait_for_gpu_release() {
   echo "ERROR: GPU processes did not exit in time" >&2
   nvidia-smi >&2 || true
   return 1
+}
+
+start_adaptive_gpu_keepalive() {
+  [[ "${ENABLE_ADAPTIVE_GPU_KEEPALIVE:-0}" == "1" ]] || return 0
+
+  local -a visible_gpus
+  IFS=',' read -r -a visible_gpus <<<"${CUDA_VISIBLE_DEVICES}"
+  if (( ${#visible_gpus[@]} != 8 )); then
+    echo "ERROR: keepalive expects 8 visible GPUs, got ${CUDA_VISIBLE_DEVICES}" >&2
+    return 2
+  fi
+
+  local keepalive_root="${STATE_ROOT}/gpu_keepalive"
+  local keepalive_log="${keepalive_root}/workers.log"
+  local gpu pid
+  mkdir -p "${keepalive_root}"
+  KEEPALIVE_STOP_FILE="${keepalive_root}/stop"
+  rm -f -- "${KEEPALIVE_STOP_FILE}"
+  : >"${keepalive_log}"
+
+  for gpu in "${visible_gpus[@]}"; do
+    CUDA_VISIBLE_DEVICES="${gpu}" \
+      "${PYTHON_BIN}" "${KEEPALIVE_SCRIPT}" \
+        --stop-file "${KEEPALIVE_STOP_FILE}" \
+        --parent-pid "$$" \
+        --physical-gpu "${gpu}" \
+        --minimum-utilization "${KEEPALIVE_MIN_UTILIZATION:-38}" \
+        --burst-seconds "${KEEPALIVE_BURST_SECONDS:-0.7}" \
+        --idle-seconds "${KEEPALIVE_IDLE_SECONDS:-0.8}" \
+        --startup-delay-seconds "${KEEPALIVE_STARTUP_DELAY_SECONDS:-30}" \
+        --matrix-size "${KEEPALIVE_MATRIX_SIZE:-2048}" \
+        --minimum-used-memory-mib "${KEEPALIVE_MIN_USED_MEMORY_MIB:-4096}" \
+        >>"${keepalive_log}" 2>&1 &
+    pid=$!
+    KEEPALIVE_PIDS+=("${pid}")
+  done
+
+  sleep 1
+  for pid in "${KEEPALIVE_PIDS[@]}"; do
+    kill -0 "${pid}" 2>/dev/null || {
+      echo "ERROR: adaptive GPU keepalive worker ${pid} exited during startup" >&2
+      tail -n 80 "${keepalive_log}" >&2 || true
+      return 3
+    }
+  done
+  printf '%s\n' "${KEEPALIVE_PIDS[@]}" >"${keepalive_root}/worker_pids"
+  echo "Adaptive GPU keepalive enabled: target>=${KEEPALIVE_MIN_UTILIZATION:-38}%"
+  echo "keepalive_log=${keepalive_log}"
 }
 
 runtime_preflight() {
@@ -420,6 +502,7 @@ echo "online_loggers=disabled"
 echo "============================================================"
 
 runtime_preflight
+start_adaptive_gpu_keepalive
 if [[ -f "${STATE_ROOT}/complete" ]]; then
   echo "SKIP: pipeline is already complete: ${RUN_ROOT}"
   exit 0
