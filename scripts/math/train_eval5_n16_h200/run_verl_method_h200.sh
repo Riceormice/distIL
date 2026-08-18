@@ -28,6 +28,13 @@ MATH_EVAL_DATA_ROOT="${MATH_EVAL_DATA_ROOT:-${ROOT}/data/math_eval}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/math_train_eval5_n16_h200_20260812}"
 SITE_PACKAGES="${ENV_DIR}/lib/python3.11/site-packages"
 
+# For SR-OPSD, SELF_REFERENCE_WEIGHT is the self-reference coefficient
+# (the paper's alpha). DIVERGENCE_ALPHA remains the fixed Forward-Renyi
+# implementation parameter and is intentionally not swept here.
+DIVERGENCE_ALPHA="${DIVERGENCE_ALPHA:-0.25}"
+RENYI_ORDER="${RENYI_ORDER:-0.95}"
+SELF_REFERENCE_WEIGHT="${SELF_REFERENCE_WEIGHT:-0.9}"
+
 VAL_N=16
 MAX_STEPS=100
 SCHEDULER_HORIZON_STEPS=420
@@ -51,8 +58,8 @@ case "${METHOD}" in
   sr_opsd)
     METHOD_LABEL=SR-OPSD
     METHOD_DIR=sr_opsd
-    RUN_NAME="sr-opsd-${MODEL_SIZE}-seed0-native-verl-forward-renyi-rho0.95-refw0.9-sync0-ema0.05-lr5e-6-trainbs8-mbs8-rolloutn8-topk100-tailFalse-clip0.05-temp0.7-tok16384-steps100-sched420-eval5-n16-${HARDWARE}"
-    METHOD_DESCRIPTION="Forward Renyi rho=0.95; self-reference=0.9; frozen reference sync=0"
+    RUN_NAME="sr-opsd-${MODEL_SIZE}-seed0-native-verl-forward-renyi-rho${RENYI_ORDER}-refw${SELF_REFERENCE_WEIGHT}-sync0-ema0.05-lr5e-6-trainbs8-mbs8-rolloutn8-topk100-tailFalse-clip0.05-temp0.7-tok16384-steps100-sched420-eval5-n16-${HARDWARE}"
+    METHOD_DESCRIPTION="Forward Renyi rho=${RENYI_ORDER}; self-reference=${SELF_REFERENCE_WEIGHT}; frozen reference sync=0"
     ;;
 esac
 
@@ -163,6 +170,9 @@ physical_stop_step=${MAX_STEPS}
 evaluation_frequency=5
 evaluation_samples_per_question=${VAL_N}
 evaluation_datasets=aime24,aime25,hmmt25,amc23,minerva
+divergence_alpha=${DIVERGENCE_ALPHA}
+renyi_order=${RENYI_ORDER}
+self_reference_weight=${SELF_REFERENCE_WEIGHT}
 method_description=${METHOD_DESCRIPTION}
 EOF
 
@@ -394,9 +404,9 @@ launch_phase() {
     GRAD_CLIP=0.1 \
     ENTROPY_COEFF=1e-5 \
     TEACHER_UPDATE_RATE=0.05 \
-    DIVERGENCE_ALPHA=0.25 \
-    RENYI_ORDER=0.95 \
-    SELF_REFERENCE_WEIGHT=0.9 \
+    DIVERGENCE_ALPHA="${DIVERGENCE_ALPHA}" \
+    RENYI_ORDER="${RENYI_ORDER}" \
+    SELF_REFERENCE_WEIGHT="${SELF_REFERENCE_WEIGHT}" \
     REF_SYNC_STEPS=0 \
     MAX_PROMPT_LENGTH=2048 \
     MAX_RESPONSE_LENGTH=16384 \
