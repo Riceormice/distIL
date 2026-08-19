@@ -9,6 +9,8 @@ MODEL_SIZE="${MODEL_SIZE:-8b}"
 VAL_N="${VAL_N:-64}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-8}"
 LORA_ADAPTER_DIR="${LORA_ADAPTER_DIR:-}"
+TOKENIZER_DIR="${TOKENIZER_DIR:-${MODEL_DIR}}"
+EVAL_PROMPT_BATCH_SIZE="${EVAL_PROMPT_BATCH_SIZE:-8}"
 DATASETS=(aime24 aime25 hmmt25 amc23 minerva)
 
 case "${MODEL_SIZE}" in
@@ -31,6 +33,7 @@ case "${MODEL_SIZE}" in
 esac
 
 test -f "${MODEL_DIR}/config.json"
+test -f "${TOKENIZER_DIR}/tokenizer_config.json"
 mkdir -p "${OUTPUT_DIR}"
 export PYTHONUNBUFFERED=1
 export TOKENIZERS_PARALLELISM=false
@@ -51,6 +54,7 @@ if (( ${#missing[@]} > 0 )); then
   eval_args=(
     "${PYTHON_BIN}" "${REPO_ROOT}/OPSD/eval/evaluate_math.py"
     --base_model "${MODEL_DIR}" \
+    --tokenizer_path "${TOKENIZER_DIR}" \
     --datasets "${missing[@]}" \
     --output_dir "${OUTPUT_DIR}" \
     --enable_thinking \
@@ -63,7 +67,8 @@ if (( ${#missing[@]} > 0 )); then
     --max_new_tokens "${MAX_NEW_TOKENS}" \
     --max_model_len 40960 \
     --gpu_memory_utilization "${EVAL_GPU_MEMORY_UTILIZATION:-0.90}" \
-    --tensor_parallel_size "${TENSOR_PARALLEL_SIZE}"
+    --tensor_parallel_size "${TENSOR_PARALLEL_SIZE}" \
+    --prompt_batch_size "${EVAL_PROMPT_BATCH_SIZE}"
   )
   if [[ -n "${LORA_ADAPTER_DIR}" ]]; then
     test -s "${LORA_ADAPTER_DIR}/adapter_config.json"

@@ -122,6 +122,7 @@ def grade_answer(predicted: str, ground_truth: str) -> bool:
 def load_vllm_model(
     base_model_path: str,
     lora_adapter_path: str = None,
+    tokenizer_path: str = None,
     gpu_memory_utilization: float = 0.9,
     tensor_parallel_size: int = 1,
     max_model_len: int = None,
@@ -133,6 +134,7 @@ def load_vllm_model(
     Args:
         base_model_path: Path to the base model
         lora_adapter_path: Path to the LoRA adapters (checkpoint directory). If None, uses base model only.
+        tokenizer_path: Optional tokenizer source. Defaults to base_model_path.
         gpu_memory_utilization: GPU memory utilization (0.0 to 1.0)
         tensor_parallel_size: Number of GPUs to use for tensor parallelism
         max_model_len: Maximum model context length
@@ -151,9 +153,13 @@ def load_vllm_model(
             f"Auto-setting max_model_len to {max_model_len} for {'thinking' if enable_thinking else 'non-thinking'} mode"
         )
 
+    tokenizer_path = tokenizer_path or base_model_path
+
     # Build LLM configuration
     llm_config = {
         "model": base_model_path,
+        "tokenizer": tokenizer_path,
+        "tokenizer_mode": "auto",
         "gpu_memory_utilization": gpu_memory_utilization,
         "tensor_parallel_size": tensor_parallel_size,
         "trust_remote_code": True,
@@ -192,8 +198,14 @@ def load_vllm_model(
 
     llm = LLM(**llm_config)
 
-    # Load tokenizer for chat template
-    tokenizer = AutoTokenizer.from_pretrained(base_model_path, trust_remote_code=True)
+    # Load the same tokenizer source used by vLLM for the chat template.
+    tokenizer = AutoTokenizer.from_pretrained(
+        tokenizer_path,
+        trust_remote_code=True,
+        use_fast=True,
+    )
+    print(f"Tokenizer source: {tokenizer_path}")
+    print(f"Fast tokenizer: {getattr(tokenizer, 'is_fast', False)}")
 
     # Print dtype information
     print("\n" + "=" * 70)
@@ -225,6 +237,7 @@ def evaluate_math500(
     enable_thinking: bool = True,
     val_n: int = 1,
     dataset_root: str | None = None,
+    prompt_batch_size: int = 0,
 ):
     """
     Evaluate model on MATH500 or other datasets using Qwen3 thinking mode with best practices.
@@ -421,11 +434,47 @@ def evaluate_math500(
         print(f"LoRA path: {lora_request.lora_path}")
     print("=" * 70 + "\n")
 
-    # Generate outputs
-    if lora_request is not None:
-        outputs = llm.generate(all_prompts, sampling_params, lora_request=lora_request, use_tqdm=True)
-    else:
-        outputs = llm.generate(all_prompts, sampling_params, use_tqdm=True)
+    # Bound each scheduler submission. With val_n=16, submitting all 272
+    # Minerva prompts at once creates 4,352 long-running sequences and can
+    # stall before vLLM reports generation progress.
+    if prompt_batch_size <= 0:
+        prompt_batch_size = len(all_prompts)
+    prompt_batch_size = min(prompt_batch_size, len(all_prompts))
+    num_prompt_batches = (len(all_prompts) + prompt_batch_size - 1) // prompt_batch_size
+    print(
+        f"Generating in {num_prompt_batches} prompt batches "
+        f"(batch_size={prompt_batch_size}, samples_per_prompt={val_n})",
+        flush=True,
+    )
+
+    outputs = []
+    for batch_index, start in enumerate(range(0, len(all_prompts), prompt_batch_size), start=1):
+        end = min(start + prompt_batch_size, len(all_prompts))
+        print(
+            f"GENERATION BATCH {batch_index}/{num_prompt_batches}: "
+            f"prompts {start + 1}-{end}/{len(all_prompts)}",
+            flush=True,
+        )
+        batch_prompts = all_prompts[start:end]
+        if lora_request is not None:
+            batch_outputs = llm.generate(
+                batch_prompts,
+                sampling_params,
+                lora_request=lora_request,
+                use_tqdm=True,
+            )
+        else:
+            batch_outputs = llm.generate(batch_prompts, sampling_params, use_tqdm=True)
+        if len(batch_outputs) != len(batch_prompts):
+            raise RuntimeError(
+                f"vLLM returned {len(batch_outputs)} outputs for "
+                f"{len(batch_prompts)} prompts in batch {batch_index}"
+            )
+        outputs.extend(batch_outputs)
+        print(
+            f"GENERATION BATCH {batch_index}/{num_prompt_batches}: COMPLETE",
+            flush=True,
+        )
 
     # Process results
     print("\nProcessing results...")
@@ -607,6 +656,12 @@ def main():
         help="Path to checkpoint directory with LoRA adapters. If not provided, will use base model only.",
     )
     parser.add_argument(
+        "--tokenizer_path",
+        type=str,
+        default=None,
+        help="Optional tokenizer source; defaults to --base_model.",
+    )
+    parser.add_argument(
         "--dataset",
         type=str,
         default="math500",
@@ -679,6 +734,12 @@ def main():
         type=float,
         default=0.9,
         help="GPU memory utilization for vLLM (0.0 to 1.0, default: 0.9)",
+    )
+    parser.add_argument(
+        "--prompt_batch_size",
+        type=int,
+        default=0,
+        help="Prompts submitted to each vLLM generate call (0 = all prompts).",
     )
     parser.add_argument(
         "--tensor_parallel_size",
@@ -765,6 +826,7 @@ def main():
     llm, tokenizer = load_vllm_model(
         args.base_model,
         args.checkpoint_dir,
+        tokenizer_path=args.tokenizer_path,
         gpu_memory_utilization=args.gpu_memory_utilization,
         tensor_parallel_size=args.tensor_parallel_size,
         max_model_len=args.max_model_len,
@@ -813,6 +875,7 @@ def main():
             enable_thinking=args.enable_thinking,
             val_n=args.val_n,
             dataset_root=args.dataset_root,
+            prompt_batch_size=args.prompt_batch_size,
         )
         averages[dataset_name] = average_at_n_pct
 

@@ -170,6 +170,8 @@ physical_stop_step=${MAX_STEPS}
 evaluation_frequency=5
 evaluation_samples_per_question=${VAL_N}
 evaluation_datasets=aime24,aime25,hmmt25,amc23,minerva
+evaluation_prompt_batch_size=${EVAL_PROMPT_BATCH_SIZE:-8}
+evaluation_tokenizer=${MODEL_PATH}
 divergence_alpha=${DIVERGENCE_ALPHA}
 renyi_order=${RENYI_ORDER}
 self_reference_weight=${SELF_REFERENCE_WEIGHT}
@@ -470,12 +472,14 @@ PY
   fi
 
   MODEL_DIR="${merged_dir}" \
+  TOKENIZER_DIR="${MODEL_PATH}" \
   LORA_ADAPTER_DIR="${lora_adapter_dir}" \
   MODEL_SIZE="${MODEL_SIZE}" \
   OUTPUT_DIR="${result_dir}" \
   VAL_N="${VAL_N}" \
   TENSOR_PARALLEL_SIZE=8 \
   EVAL_GPU_MEMORY_UTILIZATION="${EVAL_GPU_MEMORY_UTILIZATION:-0.90}" \
+  EVAL_PROMPT_BATCH_SIZE="${EVAL_PROMPT_BATCH_SIZE:-8}" \
   MATH_EVAL_DATA_ROOT="${MATH_EVAL_DATA_ROOT}" \
   PYTHON_BIN="${PYTHON_BIN}" \
     bash "${REPO}/scripts/math/eval_sr_opsd_verl_math.sh"
