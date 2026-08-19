@@ -212,30 +212,28 @@ remove_native_checkpoint() {
 
 wait_for_gpu_release() {
   local deadline=$((SECONDS + ${1:-240}))
-  local pid keepalive_pid is_keepalive
+  local threshold_mib="${GPU_RELEASE_MEMORY_THRESHOLD_MIB:-2048}"
+  local max_used_mib
   while (( SECONDS < deadline )); do
-    local workload_found=0
-    while IFS= read -r pid; do
-      [[ "${pid}" =~ ^[0-9]+$ ]] || continue
-      is_keepalive=0
-      for keepalive_pid in "${KEEPALIVE_PIDS[@]}"; do
-        if [[ "${pid}" == "${keepalive_pid}" ]]; then
-          is_keepalive=1
-          break
-        fi
-      done
-      if (( is_keepalive == 0 )); then
-        workload_found=1
-        break
-      fi
-    done < <(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | sort -u)
-    if (( workload_found == 1 )); then
-      sleep 5
-    else
+    max_used_mib="$(
+      nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null |
+        awk '
+          BEGIN { max = 0; valid = 0 }
+          /^[[:space:]]*[0-9]+[[:space:]]*$/ {
+            value = $1 + 0
+            if (value > max) max = value
+            valid = 1
+          }
+          END { if (valid) print max }
+        '
+    )"
+    if [[ "${max_used_mib}" =~ ^[0-9]+$ ]] && (( max_used_mib <= threshold_mib )); then
+      echo "GPU workload released: max_used=${max_used_mib} MiB, threshold=${threshold_mib} MiB"
       return 0
     fi
+    sleep 5
   done
-  echo "ERROR: GPU processes did not exit in time" >&2
+  echo "ERROR: GPU workload did not release in time (threshold=${threshold_mib} MiB)" >&2
   nvidia-smi >&2 || true
   return 1
 }
