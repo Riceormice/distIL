@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import re
+from collections import Counter
 from pathlib import Path
 from datasets import Dataset, load_dataset
 from vllm import LLM, SamplingParams
@@ -470,6 +471,27 @@ def evaluate_math500(
                 f"vLLM returned {len(batch_outputs)} outputs for "
                 f"{len(batch_prompts)} prompts in batch {batch_index}"
             )
+        batch_completions = [
+            completion
+            for request_output in batch_outputs
+            for completion in request_output.outputs
+        ]
+        batch_token_counts = [
+            len(getattr(completion, "token_ids", ()) or ())
+            for completion in batch_completions
+        ]
+        batch_finish_reasons = Counter(
+            str(getattr(completion, "finish_reason", None))
+            for completion in batch_completions
+        )
+        if batch_token_counts:
+            print(
+                f"GENERATION BATCH {batch_index}/{num_prompt_batches}: "
+                f"tokens min/mean/max={min(batch_token_counts)}/"
+                f"{sum(batch_token_counts) / len(batch_token_counts):.1f}/"
+                f"{max(batch_token_counts)}, finish_reasons={dict(batch_finish_reasons)}",
+                flush=True,
+            )
         outputs.extend(batch_outputs)
         print(
             f"GENERATION BATCH {batch_index}/{num_prompt_batches}: COMPLETE",
@@ -483,12 +505,14 @@ def evaluate_math500(
     ):
         # Process all val_n generations for this problem
         generations = []
+        generation_metadata = []
         predicted_answers = []
         is_correct_list = []
         is_formatted_list = []
 
         for i in range(len(output.outputs)):
-            generated_text = output.outputs[i].text
+            completion = output.outputs[i]
+            generated_text = completion.text
 
             # Extract answer from generated text
             predicted_answer = extract_boxed_answer(generated_text)
@@ -500,6 +524,13 @@ def evaluate_math500(
             is_correct = grade_answer(predicted_answer, gt_answer)
 
             generations.append(generated_text)
+            generation_metadata.append(
+                {
+                    "generated_tokens": len(getattr(completion, "token_ids", ()) or ()),
+                    "finish_reason": getattr(completion, "finish_reason", None),
+                    "stop_reason": getattr(completion, "stop_reason", None),
+                }
+            )
             predicted_answers.append(predicted_answer if predicted_answer else "[No boxed answer found]")
             is_correct_list.append(is_correct)
             is_formatted_list.append(is_formatted)
@@ -533,9 +564,19 @@ def evaluate_math500(
             "ground_truth": gt_answer,
             "val_n": val_n,
             "generations": [
-                {"predicted_answer": pred, "full_generation": gen, "correct": corr, "formatted": fmt}
-                for pred, gen, corr, fmt in zip(
-                    predicted_answers, generations, is_correct_list, is_formatted_list
+                {
+                    "predicted_answer": pred,
+                    "full_generation": gen,
+                    "correct": corr,
+                    "formatted": fmt,
+                    **metadata,
+                }
+                for pred, gen, corr, fmt, metadata in zip(
+                    predicted_answers,
+                    generations,
+                    is_correct_list,
+                    is_formatted_list,
+                    generation_metadata,
                 )
             ],
             "num_correct": num_correct,
