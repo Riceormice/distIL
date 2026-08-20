@@ -1,5 +1,6 @@
 import os
 import json as _json
+import re
 from pathlib import Path
 
 import torch as _torch
@@ -11,7 +12,7 @@ _json.JSONEncoder.default = _patched_default
 import wandb
 
 from datasets import load_dataset
-from transformers import AutoTokenizer, GenerationConfig
+from transformers import AutoTokenizer, GenerationConfig, TrainerCallback
 
 from trl import (
     LogCompletionsCallback,
@@ -137,6 +138,73 @@ class CustomScriptArguments(ScriptArguments):
             "Default True. Set to False for the matched non-thinking ablation (both nonthink)."
         },
     )
+    grouped_rollouts_per_prompt: int = field(
+        default=1,
+        metadata={
+            "help": "Number of independent rollouts for each prompt inside one optimizer step. "
+            "Values above one enable grouped-repeat sampling."
+        },
+    )
+    grouped_unique_prompts_per_step: int = field(
+        default=0,
+        metadata={
+            "help": "Unique prompts per optimizer step in grouped mode. Zero derives it from world size "
+            "and per-device batch size."
+        },
+    )
+    selected_checkpoint_steps: str = field(
+        default="",
+        metadata={"help": "Comma-separated optimizer steps at which checkpoints are forced."},
+    )
+    stop_after_step: int = field(
+        default=0,
+        metadata={
+            "help": "Stop cleanly after this optimizer step without changing the learning-rate horizon."
+        },
+    )
+    auto_resume: bool = field(
+        default=False,
+        metadata={"help": "Resume from the highest complete checkpoint in output_dir."},
+    )
+    save_final_model: bool = field(
+        default=True,
+        metadata={"help": "Save an additional final adapter directly in output_dir."},
+    )
+
+
+class SelectedCheckpointCallback(TrainerCallback):
+    def __init__(self, steps: set[int]):
+        self.steps = steps
+
+    def on_step_end(self, args, state, control, **kwargs):
+        control.should_save = state.global_step in self.steps
+        return control
+
+
+class StopAfterStepCallback(TrainerCallback):
+    def __init__(self, stop_after_step: int):
+        self.stop_after_step = int(stop_after_step)
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if self.stop_after_step > 0 and state.global_step >= self.stop_after_step:
+            control.should_training_stop = True
+        return control
+
+
+def _parse_checkpoint_steps(raw_steps: str) -> set[int]:
+    steps = {int(part.strip()) for part in raw_steps.split(",") if part.strip()}
+    if any(step <= 0 for step in steps):
+        raise ValueError(f"selected_checkpoint_steps must contain positive integers: {raw_steps}")
+    return steps
+
+
+def _latest_checkpoint(output_dir: str) -> str | None:
+    checkpoints = []
+    for checkpoint in Path(output_dir).glob("checkpoint-*"):
+        match = re.fullmatch(r"checkpoint-(\d+)", checkpoint.name)
+        if match and any(checkpoint.glob("global_step*")):
+            checkpoints.append((int(match.group(1)), checkpoint))
+    return str(max(checkpoints)[1]) if checkpoints else None
 
 
 if __name__ == "__main__":
@@ -154,6 +222,8 @@ if __name__ == "__main__":
             raise ValueError("loss_mode=sr_opsd requires --use_ema_teacher")
         if script_args.fixed_teacher:
             raise ValueError("loss_mode=sr_opsd cannot be combined with --fixed_teacher")
+
+    checkpoint_steps = _parse_checkpoint_steps(script_args.selected_checkpoint_steps)
 
     ################
     # WandB Run Name & Output Directory
@@ -242,6 +312,9 @@ if __name__ == "__main__":
                 "reference_teacher_weight": (
                     script_args.reference_teacher_weight if script_args.loss_mode == "sr_opsd" else None
                 ),
+                "grouped_rollouts_per_prompt": script_args.grouped_rollouts_per_prompt,
+                "grouped_unique_prompts_per_step": script_args.grouped_unique_prompts_per_step or None,
+                "selected_checkpoint_steps": sorted(checkpoint_steps),
             },
         )
 
@@ -338,7 +411,14 @@ if __name__ == "__main__":
         renyi_token_clip=script_args.renyi_token_clip if script_args.renyi_token_clip > 0 else None,
         student_thinking=script_args.student_thinking,
         teacher_thinking=script_args.teacher_thinking,
+        grouped_rollouts_per_prompt=script_args.grouped_rollouts_per_prompt,
+        grouped_unique_prompts_per_step=script_args.grouped_unique_prompts_per_step,
     )
+
+    if checkpoint_steps:
+        trainer.add_callback(SelectedCheckpointCallback(checkpoint_steps))
+    if script_args.stop_after_step > 0:
+        trainer.add_callback(StopAfterStepCallback(script_args.stop_after_step))
 
     if training_args.eval_strategy != "no":
         generation_config = GenerationConfig(
@@ -349,6 +429,13 @@ if __name__ == "__main__":
         completions_callback = LogCompletionsCallback(trainer, generation_config, num_prompts=8)
         trainer.add_callback(completions_callback)
 
-    trainer.train()
-
-    trainer.save_model(training_args.output_dir)
+    resume_from_checkpoint = _latest_checkpoint(training_args.output_dir) if script_args.auto_resume else None
+    if resume_from_checkpoint:
+        print(f"Resuming from checkpoint: {resume_from_checkpoint}")
+    try:
+        trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+        if script_args.save_final_model:
+            trainer.save_model(training_args.output_dir)
+    finally:
+        if os.environ.get("LOCAL_RANK", "0") == "0" and wandb.run is not None:
+            wandb.finish()

@@ -62,6 +62,7 @@ from trl.trainer.utils import (
 )
 from trl.experimental.gold.gold_config import GOLDConfig
 from data_collator import SelfDistillationDataCollator
+from grouped_repeat_sampler import GroupedRepeatSampler
 from sr_opsd_loss import sr_opsd_loss_from_logits, validate_renyi_order
 
 
@@ -149,7 +150,11 @@ class OPSDTrainer(SFTTrainer):
         renyi_token_clip: float | None = None,
         student_thinking: bool = False,
         teacher_thinking: bool = True,
+        grouped_rollouts_per_prompt: int = 1,
+        grouped_unique_prompts_per_step: int = 0,
     ):
+        self.grouped_rollouts_per_prompt = int(grouped_rollouts_per_prompt)
+        self.grouped_unique_prompts_per_step = int(grouped_unique_prompts_per_step)
         self.model_name_or_path = model if isinstance(model, str) else model.config._name_or_path
         self.model_revision = getattr(args, "student_model_revision", None)
         if isinstance(model, str) and self.model_revision is not None:
@@ -203,6 +208,36 @@ class OPSDTrainer(SFTTrainer):
         self.reference_teacher_weight = reference_teacher_weight
         self.renyi_token_clip = renyi_token_clip
         self._ema_params = None  # lazily initialized on first optimizer step
+
+        if self.grouped_rollouts_per_prompt <= 0:
+            raise ValueError("grouped_rollouts_per_prompt must be positive")
+        if self.grouped_unique_prompts_per_step < 0:
+            raise ValueError("grouped_unique_prompts_per_step cannot be negative")
+        if self.grouped_rollouts_per_prompt > 1:
+            global_micro_batch = self.accelerator.num_processes * self.args.per_device_train_batch_size
+            expected_unique_prompts = self.grouped_unique_prompts_per_step or global_micro_batch
+            if expected_unique_prompts != global_micro_batch:
+                raise ValueError(
+                    "grouped_unique_prompts_per_step must equal world_size * per_device_train_batch_size "
+                    f"({global_micro_batch}); got {expected_unique_prompts}"
+                )
+            if self.args.gradient_accumulation_steps != self.grouped_rollouts_per_prompt:
+                raise ValueError(
+                    "gradient_accumulation_steps must equal grouped_rollouts_per_prompt so each prompt group "
+                    "maps to exactly one optimizer step"
+                )
+            if self.args.group_by_length:
+                raise ValueError("group_by_length is incompatible with grouped rollout sampling")
+            self.grouped_unique_prompts_per_step = expected_unique_prompts
+            print(f"\n{'='*80}")
+            print("GROUPED ROLLOUT SAMPLING ENABLED")
+            print(f"Unique prompts per optimizer step: {self.grouped_unique_prompts_per_step}")
+            print(f"Independent rollouts per prompt: {self.grouped_rollouts_per_prompt}")
+            print(
+                "Generated trajectories per optimizer step: "
+                f"{self.grouped_unique_prompts_per_step * self.grouped_rollouts_per_prompt}"
+            )
+            print(f"{'='*80}\n")
 
         valid_loss_modes = {"distil", "jsd", "sdpo", "sr_opsd"}
         if self.loss_mode not in valid_loss_modes:
@@ -401,6 +436,29 @@ class OPSDTrainer(SFTTrainer):
             self._last_vllm_sync_step = -1
 
             self.add_callback(GOLDVLLMSyncCallback(self))
+
+    def _get_train_sampler(self, train_dataset=None):
+        if self.grouped_rollouts_per_prompt == 1:
+            return super()._get_train_sampler(train_dataset)
+        if train_dataset is None:
+            train_dataset = self.train_dataset
+        if train_dataset is None or isinstance(train_dataset, IterableDataset):
+            raise ValueError("grouped rollout sampling requires a sized map-style training dataset")
+
+        sampler = GroupedRepeatSampler(
+            train_dataset,
+            unique_prompts_per_step=self.grouped_unique_prompts_per_step,
+            rollouts_per_prompt=self.grouped_rollouts_per_prompt,
+            seed=self.args.data_seed if self.args.data_seed is not None else self.args.seed,
+        )
+        if self.accelerator.is_main_process:
+            first_group = next(sampler.grouped_indices())
+            print(
+                "Grouped sampler audit: "
+                f"dataset_rows={len(train_dataset)}, groups_per_epoch={sampler.groups_per_epoch}, "
+                f"first_prompt_indices={list(first_group)}"
+            )
+        return sampler
 
     def _set_signature_columns_if_needed(self):
         super()._set_signature_columns_if_needed()
