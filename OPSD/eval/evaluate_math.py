@@ -543,8 +543,6 @@ def evaluate_math500(
         # Majority vote: find the most common answer among formatted predictions
         majority_vote_correct = False
         if num_formatted > 0:
-            from collections import Counter
-
             formatted_predictions = [pred for pred, fmt in zip(predicted_answers, is_formatted_list) if fmt]
             if formatted_predictions:
                 most_common_answer = Counter(formatted_predictions).most_common(1)[0][0]
