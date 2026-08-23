@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Incrementally upload the current four 4B and four 8B Math runs to W&B."""
+"""Incrementally upload the main Math runs and grouped 8x8 OPSD to W&B."""
 
 from __future__ import annotations
 
@@ -40,6 +40,7 @@ class RunSpec:
     method_label: str
     run_name: str
     output_root: Path
+    profile_name: str | None = None
 
     @property
     def display_name(self) -> str:
@@ -50,6 +51,8 @@ class RunSpec:
 
     @property
     def profile(self) -> str:
+        if self.profile_name is not None:
+            return self.profile_name
         return f"{self.model_size.lower()}-{self.method_dir}-{self.hardware.lower()}"
 
 
@@ -67,6 +70,14 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path(
             "/media/vlm-ckp-fileset/ylong/math_4b_train_eval5_n16_a800_20260812"
+        ),
+    )
+    parser.add_argument(
+        "--grouped-opsd-root",
+        type=Path,
+        default=Path(
+            "/media/vlm-ckp-fileset/ylong/"
+            "math_opsd_grouped8x8_eval5_n16_h200_20260820"
         ),
     )
     parser.add_argument(
@@ -90,7 +101,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run_specs(h200_root: Path, a800_root: Path) -> tuple[RunSpec, ...]:
+def run_specs(
+    h200_root: Path,
+    a800_root: Path,
+    grouped_opsd_root: Path,
+) -> tuple[RunSpec, ...]:
     def names(model: str, hardware: str) -> tuple[tuple[str, str, str], ...]:
         return (
             (
@@ -131,6 +146,18 @@ def run_specs(h200_root: Path, a800_root: Path) -> tuple[RunSpec, ...]:
     specs.extend(
         RunSpec("4B", "A800", method_dir, label, run_name, a800_root)
         for method_dir, label, run_name in names("4b", "a800")
+    )
+    specs.append(
+        RunSpec(
+            "8B",
+            "H200",
+            "opsd",
+            "OPSD-Grouped8x8",
+            "opsd-8b-seed0-grouped-q8-r8-lr5e-6-steps100-sched420-"
+            "beta0-clip0.06-topk100-temp0.7-tok16384-eval5-n16-h200",
+            grouped_opsd_root,
+            "8b-opsd-grouped8x8-h200",
+        )
     )
     return tuple(specs)
 
@@ -583,7 +610,11 @@ def main() -> None:
     args = parse_args()
     failures = 0
     selected = 0
-    specs = run_specs(args.h200_root, args.a800_root)
+    specs = run_specs(
+        args.h200_root,
+        args.a800_root,
+        args.grouped_opsd_root,
+    )
     for spec in specs:
         try:
             pending, _ = upload_spec(

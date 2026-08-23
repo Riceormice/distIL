@@ -48,25 +48,25 @@ is_running() {
 
 show_progress() {
   local failures=0
-  echo "===== MAIN TABLE: 4B/8B x GRPO/SDPO/OPSD/SR-OPSD (8 runs) ====="
+  echo "===== MAIN TABLE (8 runs) + OPSD GROUPED 8x8 (1 run) ====="
   run_main dry-run || failures=$((failures + 1))
   echo
   echo "===== 8B SR-OPSD ALPHA/RHO SWEEP (5 runs) ====="
   run_sweep --dry-run || failures=$((failures + 1))
   echo
-  echo "managed_runs=13 destination=https://wandb.ai/${ENTITY}/${PROJECT} failures=${failures}"
+  echo "managed_runs=14 destination=https://wandb.ai/${ENTITY}/${PROJECT} failures=${failures}"
   (( failures == 0 ))
 }
 
 upload_once() {
   local failures=0
-  echo "===== UPLOAD MAIN 8 RUNS ====="
+  echo "===== UPLOAD MAIN 8 RUNS + OPSD GROUPED 8x8 ====="
   run_main once || failures=$((failures + 1))
   echo
   echo "===== UPLOAD ALPHA/RHO 5 RUNS ====="
   run_sweep || failures=$((failures + 1))
   echo
-  echo "upload_groups=2 managed_runs=13 failures=${failures}"
+  echo "upload_groups=2 managed_runs=14 failures=${failures}"
   (( failures == 0 ))
 }
 
@@ -179,7 +179,7 @@ case "${1:-status}" in
     tail -n 100 "${LOG_FILE}" 2>/dev/null || true
     ;;
   doctor)
-    echo "managed_runs=13"
+    echo "managed_runs=14"
     echo "main_state=${MAIN_STATE_ROOT}"
     echo "sweep_state=${SWEEP_STATE_ROOT}"
     echo "destination=https://wandb.ai/${ENTITY}/${PROJECT}"
