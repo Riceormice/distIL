@@ -134,6 +134,17 @@ unset PYTHONHOME PYTORCH_CUDA_ALLOC_CONF PYTORCH_ALLOC_CONF
 unset SWANLAB_API_KEY SWANLAB_WORKSPACE SWANLAB_PROJECT
 unset WANDB_API_KEY WANDB_ENTITY WANDB_PROJECT WANDB_MODE
 
+TRAINER_LOGGER='[console,file]'
+if "${PYTHON_BIN}" - <<'PY' >/dev/null 2>&1
+import tensorboard
+PY
+then
+  TRAINER_LOGGER='[console,file,tensorboard]'
+  echo "TensorBoard logger: enabled"
+else
+  echo "TensorBoard package is unavailable; continuing with console and file loggers"
+fi
+
 ARGS=(
   "data.train_files=${TRAIN_FILE}"
   "data.val_files=${VAL_FILE}"
@@ -174,7 +185,7 @@ ARGS=(
   "trainer.group_name=${GROUP_NAME}"
   "trainer.experiment_name=${EXP_NAME}"
   "trainer.default_local_dir=${RUN_DIR}"
-  "trainer.logger=[console,file,tensorboard]"
+  "trainer.logger=${TRAINER_LOGGER}"
   "trainer.n_gpus_per_node=${N_GPUS_PER_NODE}"
   "trainer.nnodes=${NNODES}"
   "trainer.total_training_steps=${TOTAL_TRAINING_STEPS}"
@@ -204,6 +215,7 @@ printf '%s\n' \
   "reference=${USE_REFERENCE}" \
   "implementation_objective_selector_alpha=${OBJECTIVE_SELECTOR_ALPHA}" \
   "self_reference_coefficient=${REG_LEVEL}" \
+  "trainer_logger=${TRAINER_LOGGER}" \
   "experiment=${EXP_NAME}" \
   "run_dir=${RUN_DIR}" \
   "log_dir=${RUN_LOG_DIR}"
