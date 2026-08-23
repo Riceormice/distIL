@@ -10,7 +10,7 @@ RHO_ARG=${2:-}
 
 ROOT=${ROOT:-/media/damoxing/che-liu-fileset/ylong/sdpo}
 PROJECT_ROOT=${PROJECT_ROOT:-"${ROOT}/code/SDPO-main-latest-provided"}
-PYTHON_ENV=${PYTHON_ENV:-/media/vlm-ckp-fileset/ylong/sdpo/envs/verl-vllm010-h200-v2}
+PYTHON_ENV=${PYTHON_ENV:-/media/damoxing/che-liu-fileset/ylong/sdpo/envs/math-verl-current}
 PYTHON_BIN=${PYTHON_BIN:-"${PYTHON_ENV}/bin/python"}
 OUTPUT_ROOT=${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/sdpo_physics_rho_selfref_grid_eval5_nockpt}
 MODEL_PATH=${MODEL_PATH:-/media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-8B}

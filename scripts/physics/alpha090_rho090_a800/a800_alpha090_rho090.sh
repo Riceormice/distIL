@@ -62,6 +62,7 @@ flock -n 9 || { echo "ERROR: alpha=0.90 rho=0.90 pipeline is already running" >&
 
 export PATH="${PYTHON_ENV}/bin:/usr/local/cuda/bin:/usr/bin:/bin:${PATH:-}"
 export VIRTUAL_ENV="${PYTHON_ENV}"
+export ROOT REPO PROJECT_ROOT PYTHON_ENV PYTHON_BIN MODEL_PATH OUTPUT_ROOT EXPERIMENT_SUFFIX
 export PYTHONNOUSERSITE=1
 export PYTHONPATH="${PROJECT_ROOT}"
 export LD_LIBRARY_PATH="${PYTHON_ENV}/lib:${PYTHON_ENV}/lib/python3.11/site-packages/torch/lib:${LD_LIBRARY_PATH:-}"
@@ -171,6 +172,11 @@ mkdir -p "${RAY_TEMP_DIR}"
 rm -f -- "${RUN_DIR}/TRAINING_COMPLETE"
 set +e
 SELF_REFERENCE_COEFFICIENT="${SELF_REFERENCE_COEFFICIENT}" \
+  ROOT="${ROOT}" \
+  PROJECT_ROOT="${PROJECT_ROOT}" \
+  PYTHON_ENV="${PYTHON_ENV}" \
+  PYTHON_BIN="${PYTHON_BIN}" \
+  MODEL_PATH="${MODEL_PATH}" \
   SEED="${SEED}" \
   OUTPUT_ROOT="${OUTPUT_ROOT}" \
   EXPERIMENT_SUFFIX="${EXPERIMENT_SUFFIX}" \
