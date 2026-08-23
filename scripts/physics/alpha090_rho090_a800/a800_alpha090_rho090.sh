@@ -74,7 +74,7 @@ export TOKENIZERS_PARALLELISM=false
 export HYDRA_FULL_ERROR=1
 export OC_CAUSE=1
 export RAY_DEDUP_LOGS=0
-export VLLM_USE_MODELSCOPE=true
+export VLLM_USE_MODELSCOPE=false
 export VLLM_USE_V1=1
 export NCCL_CUMEM_ENABLE=0
 export CUDA_DEVICE_MAX_CONNECTIONS=1
@@ -139,6 +139,7 @@ nvidia-smi --query-gpu=index,name,memory.total,compute_cap --format=csv,noheader
 import importlib
 import torch
 from flash_attn import flash_attn_func
+from vllm.config import LoRAConfig
 
 assert torch.cuda.device_count() == 8, torch.cuda.device_count()
 for index in range(8):
@@ -153,6 +154,7 @@ q = torch.randn((1, 32, 4, 64), device="cuda:0", dtype=torch.bfloat16)
 result = flash_attn_func(q, q, q, causal=True)
 torch.cuda.synchronize()
 assert result.shape == q.shape
+assert LoRAConfig is not None
 print("A800 runtime preflight: PASS")
 PY
 
