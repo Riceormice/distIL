@@ -32,6 +32,16 @@ case "${MODEL_SIZE}" in
     ;;
 esac
 
+if [[ -n "${EVAL_MAX_NEW_TOKENS:-}" ]]; then
+  [[ "${EVAL_MAX_NEW_TOKENS}" =~ ^[1-9][0-9]*$ ]] || {
+    echo "EVAL_MAX_NEW_TOKENS must be a positive integer, got ${EVAL_MAX_NEW_TOKENS}" >&2
+    exit 2
+  }
+  MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS}"
+fi
+
+echo "Math evaluation decoding: model_size=${MODEL_SIZE} max_new_tokens=${MAX_NEW_TOKENS}"
+
 test -f "${MODEL_DIR}/config.json"
 test -f "${TOKENIZER_DIR}/tokenizer_config.json"
 mkdir -p "${OUTPUT_DIR}"

@@ -42,6 +42,15 @@ TRAIN_BATCH_SIZE=8
 PPO_MINI_BATCH_SIZE=8
 ROLLOUT_N=8
 
+# GRPO currently fails to terminate reliably under the historical 38,912-token
+# 8B evaluation budget. Keep the legacy budget for the other 8B methods while
+# capping only GRPO at the 16,384-token training response limit.
+case "${MODEL_SIZE}:${METHOD}" in
+  8b:grpo) EVAL_MAX_NEW_TOKENS=16384 ;;
+  8b:*) EVAL_MAX_NEW_TOKENS=38912 ;;
+  4b:*) EVAL_MAX_NEW_TOKENS=16384 ;;
+esac
+
 case "${METHOD}" in
   grpo)
     METHOD_LABEL=GRPO
@@ -171,6 +180,7 @@ evaluation_frequency=5
 evaluation_samples_per_question=${VAL_N}
 evaluation_datasets=aime24,aime25,hmmt25,amc23,minerva
 evaluation_prompt_batch_size=${EVAL_PROMPT_BATCH_SIZE:-8}
+evaluation_max_new_tokens=${EVAL_MAX_NEW_TOKENS}
 evaluation_tokenizer=${MODEL_PATH}
 divergence_alpha=${DIVERGENCE_ALPHA}
 renyi_order=${RENYI_ORDER}
@@ -480,6 +490,7 @@ PY
   TENSOR_PARALLEL_SIZE=8 \
   EVAL_GPU_MEMORY_UTILIZATION="${EVAL_GPU_MEMORY_UTILIZATION:-0.90}" \
   EVAL_PROMPT_BATCH_SIZE="${EVAL_PROMPT_BATCH_SIZE:-8}" \
+  EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS}" \
   MATH_EVAL_DATA_ROOT="${MATH_EVAL_DATA_ROOT}" \
   PYTHON_BIN="${PYTHON_BIN}" \
     bash "${REPO}/scripts/math/eval_sr_opsd_verl_math.sh"
@@ -507,7 +518,7 @@ echo "framework=SDPO native VERL"
 echo "objective=${METHOD_DESCRIPTION}"
 echo "shared_training=trainbs8; mbs8; rolloutn8; lr5e-6; linear/0; tok16384"
 echo "training=100 physical steps; learning-rate horizon=420; external evaluation every 5 steps"
-echo "evaluation=five math datasets; thinking; N=16; TP=8"
+echo "evaluation=five math datasets; thinking; N=16; TP=8; max_new_tokens=${EVAL_MAX_NEW_TOKENS}"
 echo "checkpoint_policy=retain current resume point only; delete after next checkpoint; delete final after eval"
 echo "output=${RUN_ROOT}"
 echo "online_loggers=disabled"
