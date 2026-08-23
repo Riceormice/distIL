@@ -206,6 +206,33 @@ def training_metrics_path(run_root: Path, spec: RunSpec) -> Path | None:
     return None
 
 
+def decode_json_records(raw_line: bytes) -> list[Any]:
+    """Decode one JSONL line, including accidentally concatenated objects."""
+    try:
+        text = raw_line.decode("utf-8")
+    except UnicodeDecodeError:
+        return []
+    try:
+        return [json.loads(text)]
+    except json.JSONDecodeError:
+        pass
+
+    decoder = json.JSONDecoder()
+    records: list[Any] = []
+    position = 0
+    while position < len(text):
+        while position < len(text) and text[position].isspace():
+            position += 1
+        if position == len(text):
+            break
+        try:
+            payload, position = decoder.raw_decode(text, position)
+        except json.JSONDecodeError:
+            return []
+        records.append(payload)
+    return records
+
+
 def read_training_events(path: Path | None) -> dict[int, dict[str, float]]:
     if path is None or not path.is_file():
         return {}
@@ -215,33 +242,46 @@ def read_training_events(path: Path | None) -> dict[int, dict[str, float]]:
     for index, raw_line in enumerate(lines):
         if not raw_line.strip():
             continue
-        try:
-            payload = json.loads(raw_line)
-        except json.JSONDecodeError:
+        payloads = decode_json_records(raw_line)
+        if not payloads:
             if index == len(lines) - 1 and not content.endswith(b"\n"):
                 break
-            raise RuntimeError(f"invalid JSONL record in {path} at line {index + 1}")
-        if not isinstance(payload, dict) or "step" not in payload:
+            print(
+                f"WARNING: skipping invalid JSONL record in {path} "
+                f"at line {index + 1}",
+                file=sys.stderr,
+                flush=True,
+            )
             continue
-        step = int(payload["step"])
-        if not 1 <= step <= MAX_STEP:
-            continue
-        raw_metrics = payload.get("data", payload.get("metrics"))
-        if raw_metrics is None:
-            raw_metrics = {
-                key: value
-                for key, value in payload.items()
-                if key not in {"step", "timestamp"}
-            }
-        if not isinstance(raw_metrics, dict):
-            continue
-        metrics: dict[str, float] = {}
-        for key, value in raw_metrics.items():
-            if isinstance(value, bool):
-                metrics[str(key)] = float(value)
-            elif isinstance(value, (int, float)) and math.isfinite(float(value)):
-                metrics[str(key)] = float(value)
-        events.setdefault(step, {}).update(metrics)
+        if len(payloads) > 1:
+            print(
+                f"WARNING: recovered {len(payloads)} concatenated JSON records "
+                f"from {path} at line {index + 1}",
+                file=sys.stderr,
+                flush=True,
+            )
+        for payload in payloads:
+            if not isinstance(payload, dict) or "step" not in payload:
+                continue
+            step = int(payload["step"])
+            if not 1 <= step <= MAX_STEP:
+                continue
+            raw_metrics = payload.get("data", payload.get("metrics"))
+            if raw_metrics is None:
+                raw_metrics = {
+                    key: value
+                    for key, value in payload.items()
+                    if key not in {"step", "timestamp"}
+                }
+            if not isinstance(raw_metrics, dict):
+                continue
+            metrics: dict[str, float] = {}
+            for key, value in raw_metrics.items():
+                if isinstance(value, bool):
+                    metrics[str(key)] = float(value)
+                elif isinstance(value, (int, float)) and math.isfinite(float(value)):
+                    metrics[str(key)] = float(value)
+            events.setdefault(step, {}).update(metrics)
     return events
 
 
