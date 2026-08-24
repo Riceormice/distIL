@@ -130,7 +130,7 @@ export PYTHONUNBUFFERED=1
 echo "python=${PYTHON_BIN}"
 echo "source=${OUTPUT_ROOT}"
 echo "destination=https://wandb.ai/${ENTITY}/${PROJECT}"
-echo "expected_runs=8"
+echo "selection=${*:-default 8-point grid}"
 
 exec "${PYTHON_BIN}" "${SCRIPT_DIR}/upload_physics_rho_selfref_grid_to_wandb.py" \
   --output-root "${OUTPUT_ROOT}" \

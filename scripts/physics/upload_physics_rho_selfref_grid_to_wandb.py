@@ -76,6 +76,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--total-steps", type=int, default=420)
     parser.add_argument("--eval-freq", type=int, default=5)
     parser.add_argument("--validation-lines", type=int, default=1280)
+    parser.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        metavar="SELFREF,RHO",
+        help=(
+            "Upload only the selected grid point; may be repeated. "
+            "Example: --include 0.9,0.9. The default remains the original 8-point grid."
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--reset-state",
@@ -83,6 +93,20 @@ def parse_args() -> argparse.Namespace:
         help="Forget local upload state. Existing W&B runs retain deterministic IDs.",
     )
     return parser.parse_args()
+
+
+def requested_grid(values: list[str]) -> set[tuple[str, str]]:
+    if not values:
+        return set(EXPECTED_GRID)
+    selected: set[tuple[str, str]] = set()
+    for value in values:
+        parts = tuple(part.strip() for part in value.split(","))
+        if len(parts) != 2 or not all(re.fullmatch(r"\d+(?:\.\d+)?", part) for part in parts):
+            raise ValueError(
+                f"invalid --include value {value!r}; expected SELFREF,RHO, for example 0.9,0.9"
+            )
+        selected.add((parts[0], parts[1]))
+    return selected
 
 
 def token(run_name: str, label: str) -> str:
@@ -243,6 +267,7 @@ def validate_source(
 
 def discover_candidates(
     output_root: Path,
+    expected_grid: set[tuple[str, str]],
 ) -> dict[tuple[str, str], list[RunSource]]:
     logs_root = output_root / "logs"
     if not logs_root.is_dir():
@@ -255,10 +280,10 @@ def discover_candidates(
         except ValueError:
             continue
         key = (source.self_reference, source.rho)
-        if key in EXPECTED_GRID:
+        if key in expected_grid:
             candidates.setdefault(key, []).append(source)
 
-    missing = sorted(EXPECTED_GRID - set(candidates))
+    missing = sorted(expected_grid - set(candidates))
     if missing:
         raise RuntimeError(f"missing grid points: {missing}")
     return candidates
@@ -370,6 +395,15 @@ def upload_source(
 ) -> None:
     state_path = state_path_for(state_dir, source)
     state = load_state(state_path)
+    if state and (
+        state.get("entity") != entity or state.get("project") != project
+    ):
+        print(
+            f"IGNORING upload state for another destination: "
+            f"{state.get('entity')}/{state.get('project')}",
+            flush=True,
+        )
+        state = {}
     last_step = int(state.get("last_step", 0))
     artifact_logged = bool(state.get("artifact_logged", False))
     pending = [step for step in sorted(events) if step > last_step]
@@ -494,13 +528,20 @@ def upload_source(
 
 def main() -> None:
     args = parse_args()
+    try:
+        expected_grid = requested_grid(args.include)
+    except ValueError as exc:
+        raise SystemExit(f"ERROR: {exc}") from exc
     state_dir = args.output_root / "wandb_upload_state"
     if args.reset_state and state_dir.exists():
         for path in state_dir.glob("*.json"):
             path.unlink()
 
-    candidates = discover_candidates(args.output_root)
-    print(f"Discovered all {len(candidates)} expected grid points")
+    candidates = discover_candidates(args.output_root, expected_grid)
+    print(
+        f"Discovered all {len(candidates)} requested grid points: "
+        f"{sorted(expected_grid, key=lambda item: (float(item[0]), float(item[1])))}"
+    )
 
     validated: dict[tuple[str, str], tuple[RunSource, dict[int, dict[str, Any]], Path]] = {}
     for key in sorted(candidates, key=lambda item: (float(item[0]), float(item[1]))):
