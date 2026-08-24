@@ -171,6 +171,12 @@ class OPSDTrainer(SFTTrainer):
                 teacher_thinking=teacher_thinking,
             )
 
+        # The custom collator consumes raw problem/solution records. TRL 0.26
+        # otherwise tries to tokenize the default `text` column during init.
+        dataset_kwargs = dict(args.dataset_kwargs or {})
+        dataset_kwargs["skip_prepare_dataset"] = True
+        args.dataset_kwargs = dataset_kwargs
+
         super().__init__(
             model,
             args=args,
