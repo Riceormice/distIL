@@ -178,19 +178,25 @@ def lock_is_held(path: Path) -> bool:
     return result.returncode != 0
 
 
-def latest_log(run: Path, spec: RunSpec, physics_root: Path) -> Path | None:
+def log_files(run: Path, spec: RunSpec, physics_root: Path) -> list[Path]:
     paths: list[Path] = []
     if spec.kind == "physics":
         log_dir = physics_root / "logs" / run.name
         paths.extend(log_dir.glob("*.log"))
-        paths.extend(log_dir.glob("metrics.jsonl"))
     else:
         paths.extend((run / "logs").glob("pipeline_*.log"))
         paths.extend((run / "logs").glob("*.log"))
-        paths.extend((run / "native" / "logs").glob("*/metrics.jsonl"))
-        direct = run / "training_metrics.jsonl"
-        if direct.is_file():
-            paths.append(direct)
+    return list(dict.fromkeys(paths))
+
+
+def latest_log(run: Path, spec: RunSpec, physics_root: Path) -> Path | None:
+    paths = log_files(run, spec, physics_root)
+    return max(paths, key=lambda path: path.stat().st_mtime) if paths else None
+
+
+def latest_activity(run: Path, spec: RunSpec, physics_root: Path) -> Path | None:
+    paths = log_files(run, spec, physics_root)
+    paths.extend(metric_paths(run, spec, physics_root))
     return max(paths, key=lambda path: path.stat().st_mtime) if paths else None
 
 
@@ -295,7 +301,8 @@ def main() -> None:
             continue
 
         log = latest_log(run, spec, args.physics_root)
-        age, age_minutes = format_age(log)
+        activity = latest_activity(run, spec, args.physics_root)
+        age, age_minutes = format_age(activity)
         complete = (
             (run / "TRAINING_COMPLETE").is_file()
             if spec.kind == "physics"
