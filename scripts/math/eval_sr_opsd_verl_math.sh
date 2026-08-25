@@ -10,8 +10,29 @@ VAL_N="${VAL_N:-64}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-8}"
 LORA_ADAPTER_DIR="${LORA_ADAPTER_DIR:-}"
 TOKENIZER_DIR="${TOKENIZER_DIR:-${MODEL_DIR}}"
-EVAL_PROMPT_BATCH_SIZE="${EVAL_PROMPT_BATCH_SIZE:-8}"
+EVAL_SUBMISSION_MODE="${EVAL_SUBMISSION_MODE:-legacy_all_prompts}"
 DATASETS=(aime24 aime25 hmmt25 amc23 minerva)
+
+case "${EVAL_SUBMISSION_MODE}" in
+  legacy_all_prompts)
+    if [[ -n "${EVAL_PROMPT_BATCH_SIZE:-}" && "${EVAL_PROMPT_BATCH_SIZE}" != "0" ]]; then
+      echo "legacy_all_prompts requires EVAL_PROMPT_BATCH_SIZE=0" >&2
+      exit 2
+    fi
+    EVAL_PROMPT_BATCH_SIZE=0
+    ;;
+  chunked)
+    EVAL_PROMPT_BATCH_SIZE="${EVAL_PROMPT_BATCH_SIZE:-8}"
+    [[ "${EVAL_PROMPT_BATCH_SIZE}" =~ ^[1-9][0-9]*$ ]] || {
+      echo "chunked mode requires a positive EVAL_PROMPT_BATCH_SIZE" >&2
+      exit 2
+    }
+    ;;
+  *)
+    echo "EVAL_SUBMISSION_MODE must be legacy_all_prompts or chunked" >&2
+    exit 2
+    ;;
+esac
 
 case "${MODEL_SIZE}" in
   4b)
@@ -40,6 +61,7 @@ if [[ -n "${EVAL_MAX_NEW_TOKENS:-}" ]]; then
   MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS}"
 fi
 
+echo "Math evaluation protocol: submission_mode=${EVAL_SUBMISSION_MODE} prompt_batch_size=${EVAL_PROMPT_BATCH_SIZE}"
 echo "Math evaluation decoding: model_size=${MODEL_SIZE} max_new_tokens=${MAX_NEW_TOKENS}"
 
 test -f "${MODEL_DIR}/config.json"

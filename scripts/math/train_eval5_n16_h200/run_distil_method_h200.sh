@@ -14,6 +14,12 @@ MAX_STEPS="${MAX_STEPS:-100}"
 SCHEDULER_HORIZON_STEPS="${SCHEDULER_HORIZON_STEPS:-420}"
 EVAL_FREQUENCY="${EVAL_FREQUENCY:-5}"
 VAL_N="${VAL_N:-16}"
+EVAL_SUBMISSION_MODE="${EVAL_SUBMISSION_MODE:-legacy_all_prompts}"
+case "${EVAL_SUBMISSION_MODE}" in
+  legacy_all_prompts) EVAL_PROMPT_BATCH_SIZE=0 ;;
+  chunked) EVAL_PROMPT_BATCH_SIZE="${EVAL_PROMPT_BATCH_SIZE:-8}" ;;
+  *) echo "ERROR: unsupported EVAL_SUBMISSION_MODE=${EVAL_SUBMISSION_MODE}" >&2; exit 2 ;;
+esac
 SAVE_STEPS="$(seq -s, "${EVAL_FREQUENCY}" "${EVAL_FREQUENCY}" "${MAX_STEPS}")"
 SEED="${SEED:-0}"
 LR="${LR:-5e-6}"
@@ -108,6 +114,8 @@ warmup_steps=0
 max_response_length=${MAX_COMPLETION_LENGTH}
 evaluation_frequency=${EVAL_FREQUENCY}
 evaluation_samples_per_question=${VAL_N}
+evaluation_submission_mode=${EVAL_SUBMISSION_MODE}
+evaluation_prompt_batch_size=${EVAL_PROMPT_BATCH_SIZE}
 EOF
 
 checkpoint_dir() {
@@ -244,6 +252,8 @@ evaluate_step() (
   VAL_N="${VAL_N}" \
   TENSOR_PARALLEL_SIZE=8 \
   EVAL_GPU_MEMORY_UTILIZATION="${EVAL_GPU_MEMORY_UTILIZATION:-0.90}" \
+  EVAL_SUBMISSION_MODE="${EVAL_SUBMISSION_MODE}" \
+  EVAL_PROMPT_BATCH_SIZE="${EVAL_PROMPT_BATCH_SIZE}" \
   MATH_EVAL_DATA_ROOT="${MATH_EVAL_DATA_ROOT}" \
     bash "${REPO}/scripts/math/eval_sr_opsd_verl_math.sh"
   result_complete "${step}"
@@ -267,7 +277,7 @@ echo "Qwen3-8B ${METHOD} train/evaluate pipeline"
 echo "host=$(hostname)"
 echo "training=${MAX_STEPS} steps; scheduler horizon=${SCHEDULER_HORIZON_STEPS}; eval every ${EVAL_FREQUENCY} steps"
 echo "sampling=${UNIQUE_PROMPTS_PER_OPTIMIZER_STEP} unique prompts x ${ROLLOUTS_PER_QUESTION} rollouts = ${TRAJECTORIES_PER_OPTIMIZER_STEP} trajectories per optimizer step"
-echo "evaluation=five math datasets; thinking; N=${VAL_N}; TP=8"
+echo "evaluation=five math datasets; thinking; N=${VAL_N}; TP=8; submission=${EVAL_SUBMISSION_MODE}"
 echo "checkpoint_policy=retain current resume point only; delete after next checkpoint; delete final after eval"
 echo "output=${RUN_ROOT}"
 echo "online_loggers=disabled"

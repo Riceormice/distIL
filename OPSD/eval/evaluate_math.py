@@ -435,67 +435,97 @@ def evaluate_math500(
         print(f"LoRA path: {lora_request.lora_path}")
     print("=" * 70 + "\n")
 
-    # Bound each scheduler submission. With val_n=16, submitting all 272
-    # Minerva prompts at once creates 4,352 long-running sequences and can
-    # stall before vLLM reports generation progress.
+    requested_prompt_batch_size = prompt_batch_size
     if prompt_batch_size <= 0:
-        prompt_batch_size = len(all_prompts)
-    prompt_batch_size = min(prompt_batch_size, len(all_prompts))
-    num_prompt_batches = (len(all_prompts) + prompt_batch_size - 1) // prompt_batch_size
-    print(
-        f"Generating in {num_prompt_batches} prompt batches "
-        f"(batch_size={prompt_batch_size}, samples_per_prompt={val_n})",
-        flush=True,
-    )
-
-    outputs = []
-    for batch_index, start in enumerate(range(0, len(all_prompts), prompt_batch_size), start=1):
-        end = min(start + prompt_batch_size, len(all_prompts))
+        # Legacy Qwen3-8B Math protocol: submit the complete dataset to one
+        # vLLM scheduler call, exactly as before prompt chunking was added.
+        submission_mode = "all_prompts"
+        effective_prompt_batch_size = len(all_prompts)
+        num_prompt_batches = 1
         print(
-            f"GENERATION BATCH {batch_index}/{num_prompt_batches}: "
-            f"prompts {start + 1}-{end}/{len(all_prompts)}",
+            f"Generating all {len(all_prompts)} prompts in one scheduler submission "
+            f"(samples_per_prompt={val_n})",
             flush=True,
         )
-        batch_prompts = all_prompts[start:end]
         if lora_request is not None:
-            batch_outputs = llm.generate(
-                batch_prompts,
+            outputs = llm.generate(
+                all_prompts,
                 sampling_params,
                 lora_request=lora_request,
                 use_tqdm=True,
             )
         else:
-            batch_outputs = llm.generate(batch_prompts, sampling_params, use_tqdm=True)
-        if len(batch_outputs) != len(batch_prompts):
-            raise RuntimeError(
-                f"vLLM returned {len(batch_outputs)} outputs for "
-                f"{len(batch_prompts)} prompts in batch {batch_index}"
-            )
-        batch_completions = [
-            completion
-            for request_output in batch_outputs
-            for completion in request_output.outputs
-        ]
-        batch_token_counts = [
-            len(getattr(completion, "token_ids", ()) or ())
-            for completion in batch_completions
-        ]
-        batch_finish_reasons = Counter(
-            str(getattr(completion, "finish_reason", None))
-            for completion in batch_completions
+            outputs = llm.generate(all_prompts, sampling_params, use_tqdm=True)
+    else:
+        # Optional bounded mode for environments where one large submission
+        # cannot complete reliably.
+        submission_mode = "chunked"
+        effective_prompt_batch_size = min(prompt_batch_size, len(all_prompts))
+        num_prompt_batches = (
+            len(all_prompts) + effective_prompt_batch_size - 1
+        ) // effective_prompt_batch_size
+        print(
+            f"Generating in {num_prompt_batches} prompt batches "
+            f"(batch_size={effective_prompt_batch_size}, samples_per_prompt={val_n})",
+            flush=True,
         )
-        if batch_token_counts:
+
+        outputs = []
+        for batch_index, start in enumerate(
+            range(0, len(all_prompts), effective_prompt_batch_size), start=1
+        ):
+            end = min(start + effective_prompt_batch_size, len(all_prompts))
             print(
                 f"GENERATION BATCH {batch_index}/{num_prompt_batches}: "
-                f"tokens min/mean/max={min(batch_token_counts)}/"
-                f"{sum(batch_token_counts) / len(batch_token_counts):.1f}/"
-                f"{max(batch_token_counts)}, finish_reasons={dict(batch_finish_reasons)}",
+                f"prompts {start + 1}-{end}/{len(all_prompts)}",
                 flush=True,
             )
-        outputs.extend(batch_outputs)
-        print(
-            f"GENERATION BATCH {batch_index}/{num_prompt_batches}: COMPLETE",
-            flush=True,
+            batch_prompts = all_prompts[start:end]
+            if lora_request is not None:
+                batch_outputs = llm.generate(
+                    batch_prompts,
+                    sampling_params,
+                    lora_request=lora_request,
+                    use_tqdm=True,
+                )
+            else:
+                batch_outputs = llm.generate(batch_prompts, sampling_params, use_tqdm=True)
+            if len(batch_outputs) != len(batch_prompts):
+                raise RuntimeError(
+                    f"vLLM returned {len(batch_outputs)} outputs for "
+                    f"{len(batch_prompts)} prompts in batch {batch_index}"
+                )
+            batch_completions = [
+                completion
+                for request_output in batch_outputs
+                for completion in request_output.outputs
+            ]
+            batch_token_counts = [
+                len(getattr(completion, "token_ids", ()) or ())
+                for completion in batch_completions
+            ]
+            batch_finish_reasons = Counter(
+                str(getattr(completion, "finish_reason", None))
+                for completion in batch_completions
+            )
+            if batch_token_counts:
+                print(
+                    f"GENERATION BATCH {batch_index}/{num_prompt_batches}: "
+                    f"tokens min/mean/max={min(batch_token_counts)}/"
+                    f"{sum(batch_token_counts) / len(batch_token_counts):.1f}/"
+                    f"{max(batch_token_counts)}, finish_reasons={dict(batch_finish_reasons)}",
+                    flush=True,
+                )
+            outputs.extend(batch_outputs)
+            print(
+                f"GENERATION BATCH {batch_index}/{num_prompt_batches}: COMPLETE",
+                flush=True,
+            )
+
+    if len(outputs) != len(all_prompts):
+        raise RuntimeError(
+            f"vLLM returned {len(outputs)} outputs for {len(all_prompts)} prompts "
+            f"in {submission_mode} mode"
         )
 
     # Process results
@@ -659,6 +689,10 @@ def evaluate_math500(
             "presence_penalty": presence_penalty,
             "max_new_tokens": max_new_tokens,
             "val_n": val_n,
+            "scheduler_submission_mode": submission_mode,
+            "requested_prompt_batch_size": requested_prompt_batch_size,
+            "effective_prompt_batch_size": effective_prompt_batch_size,
+            "num_prompt_batches": num_prompt_batches,
             "num_problems": num_problems,
             "total_solutions": total,
             "pass_at_n": pass_at_n,

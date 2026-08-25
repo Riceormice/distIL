@@ -50,6 +50,12 @@ case "${MODEL_SIZE}:${METHOD}" in
   8b:*) EVAL_MAX_NEW_TOKENS=38912 ;;
   4b:*) EVAL_MAX_NEW_TOKENS=16384 ;;
 esac
+EVAL_SUBMISSION_MODE="${EVAL_SUBMISSION_MODE:-legacy_all_prompts}"
+case "${EVAL_SUBMISSION_MODE}" in
+  legacy_all_prompts) EVAL_PROMPT_BATCH_SIZE=0 ;;
+  chunked) EVAL_PROMPT_BATCH_SIZE="${EVAL_PROMPT_BATCH_SIZE:-8}" ;;
+  *) echo "ERROR: unsupported EVAL_SUBMISSION_MODE=${EVAL_SUBMISSION_MODE}" >&2; exit 2 ;;
+esac
 
 case "${METHOD}" in
   grpo)
@@ -179,7 +185,8 @@ physical_stop_step=${MAX_STEPS}
 evaluation_frequency=5
 evaluation_samples_per_question=${VAL_N}
 evaluation_datasets=aime24,aime25,hmmt25,amc23,minerva
-evaluation_prompt_batch_size=${EVAL_PROMPT_BATCH_SIZE:-8}
+evaluation_submission_mode=${EVAL_SUBMISSION_MODE}
+evaluation_prompt_batch_size=${EVAL_PROMPT_BATCH_SIZE}
 evaluation_max_new_tokens=${EVAL_MAX_NEW_TOKENS}
 evaluation_tokenizer=${MODEL_PATH}
 divergence_alpha=${DIVERGENCE_ALPHA}
@@ -489,7 +496,8 @@ PY
   VAL_N="${VAL_N}" \
   TENSOR_PARALLEL_SIZE=8 \
   EVAL_GPU_MEMORY_UTILIZATION="${EVAL_GPU_MEMORY_UTILIZATION:-0.90}" \
-  EVAL_PROMPT_BATCH_SIZE="${EVAL_PROMPT_BATCH_SIZE:-8}" \
+  EVAL_SUBMISSION_MODE="${EVAL_SUBMISSION_MODE}" \
+  EVAL_PROMPT_BATCH_SIZE="${EVAL_PROMPT_BATCH_SIZE}" \
   EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS}" \
   MATH_EVAL_DATA_ROOT="${MATH_EVAL_DATA_ROOT}" \
   PYTHON_BIN="${PYTHON_BIN}" \
@@ -518,7 +526,7 @@ echo "framework=SDPO native VERL"
 echo "objective=${METHOD_DESCRIPTION}"
 echo "shared_training=trainbs8; mbs8; rolloutn8; lr5e-6; linear/0; tok16384"
 echo "training=100 physical steps; learning-rate horizon=420; external evaluation every 5 steps"
-echo "evaluation=five math datasets; thinking; N=16; TP=8; max_new_tokens=${EVAL_MAX_NEW_TOKENS}"
+echo "evaluation=five math datasets; thinking; N=16; TP=8; max_new_tokens=${EVAL_MAX_NEW_TOKENS}; submission=${EVAL_SUBMISSION_MODE}"
 echo "checkpoint_policy=retain current resume point only; delete after next checkpoint; delete final after eval"
 echo "output=${RUN_ROOT}"
 echo "online_loggers=disabled"
