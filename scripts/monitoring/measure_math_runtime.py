@@ -34,10 +34,12 @@ STEP_PATTERN = re.compile(r'"step"\s*:\s*(\d+)')
 @dataclass(frozen=True)
 class Cycle:
     step: int
+    observed_start: float
     start: float
     end: float
     phases: dict[str, float]
     restart_logs: int
+    late_restart_logs: int
 
     @property
     def seconds(self) -> float:
@@ -52,6 +54,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rho", help="Select one sweep rho instead of auto-selection")
     parser.add_argument("--total-steps", type=int, default=100)
     parser.add_argument("--eval-every", type=int, default=5)
+    parser.add_argument(
+        "--recent-cycles",
+        type=int,
+        default=5,
+        help="Use at most this many latest continuous cycles for projection",
+    )
     return parser.parse_args()
 
 
@@ -122,7 +130,12 @@ def build_cycles(run: Path, results: dict[int, dict[str, float]]) -> list[Cycle]
         times = results[step]
         if any(dataset not in times for dataset in DATASETS):
             continue
-        start = previous_end if previous_end is not None else launch_times[0]
+        observed_start = previous_end if previous_end is not None else launch_times[0]
+        first_result = min(times.values())
+        launches_before_first_result = [
+            stamp for stamp in launch_times if observed_start <= stamp <= first_result
+        ]
+        start = max(launches_before_first_result, default=observed_start)
         phase_start = start
         phases: dict[str, float] = {}
         ordered = True
@@ -138,8 +151,11 @@ def build_cycles(run: Path, results: dict[int, dict[str, float]]) -> list[Cycle]
             previous_end = max(times.values())
             continue
         end = max(times.values())
-        restarts = sum(start < stamp < end for stamp in launch_times)
-        cycles.append(Cycle(step, start, end, phases, restarts))
+        restarts = sum(observed_start < stamp < end for stamp in launch_times)
+        late_restarts = sum(first_result < stamp < end for stamp in launch_times)
+        cycles.append(
+            Cycle(step, observed_start, start, end, phases, restarts, late_restarts)
+        )
         previous_end = end
     return cycles
 
@@ -186,9 +202,11 @@ def select_sweep_run(root: Path, alpha: str | None, rho: str | None) -> Path:
     return max(candidates, key=run_score)
 
 
-def phase_reference(cycles: list[Cycle]) -> tuple[list[Cycle], dict[str, float]]:
-    uninterrupted = [cycle for cycle in cycles if cycle.restart_logs == 0]
-    reference = uninterrupted or cycles
+def phase_reference(
+    cycles: list[Cycle], recent_cycles: int
+) -> tuple[list[Cycle], dict[str, float]]:
+    continuous = [cycle for cycle in cycles if cycle.late_restart_logs == 0]
+    reference = (continuous or cycles)[-recent_cycles:]
     phases = {
         dataset: statistics.median(cycle.phases[dataset] for cycle in reference)
         for dataset in DATASETS
@@ -196,7 +214,13 @@ def phase_reference(cycles: list[Cycle]) -> tuple[list[Cycle], dict[str, float]]
     return reference, phases
 
 
-def analyze(label: str, run: Path, total_steps: int, eval_every: int) -> None:
+def analyze(
+    label: str,
+    run: Path,
+    total_steps: int,
+    eval_every: int,
+    recent_cycles: int,
+) -> None:
     if not run.is_dir():
         print(f"\n===== {label} =====\nMISSING: {run}")
         return
@@ -234,18 +258,24 @@ def analyze(label: str, run: Path, total_steps: int, eval_every: int) -> None:
             f"{dataset}={format_seconds(cycle.phases[dataset])}" for dataset in DATASETS
         )
         print(
-            f"  step={cycle.step:3d} start={format_time(cycle.start)} "
+            f"  step={cycle.step:3d} successful_start={format_time(cycle.start)} "
             f"end={format_time(cycle.end)} wall={format_seconds(cycle.seconds)} "
-            f"restart_logs={cycle.restart_logs}"
+            f"restart_logs={cycle.restart_logs} late_restarts={cycle.late_restart_logs}"
         )
+        if cycle.start != cycle.observed_start:
+            print(
+                f"    excluded_before_restart={format_seconds(cycle.start - cycle.observed_start)} "
+                f"observed_start={format_time(cycle.observed_start)}"
+            )
         print(f"    phases: {phase_text}")
 
-    reference, phase_medians = phase_reference(cycles)
+    reference, phase_medians = phase_reference(cycles, recent_cycles)
     cycle_median = statistics.median(cycle.seconds for cycle in reference)
     cycle_mean = statistics.mean(cycle.seconds for cycle in reference)
-    source = "uninterrupted cycles" if any(c.restart_logs == 0 for c in cycles) else "all cycles"
+    source_steps = [cycle.step for cycle in reference]
     print(
-        f"reference={source}, n={len(reference)}, "
+        f"reference=latest continuous successful cycles, steps={source_steps}, "
+        f"n={len(reference)}, "
         f"cycle_median={format_seconds(cycle_median)}, "
         f"cycle_mean={format_seconds(cycle_mean)}"
     )
@@ -286,6 +316,8 @@ def analyze(label: str, run: Path, total_steps: int, eval_every: int) -> None:
 
 def main() -> None:
     args = parse_args()
+    if args.recent_cycles <= 0:
+        raise SystemExit("--recent-cycles must be positive")
     sweep = select_sweep_run(args.sweep_root, args.alpha, args.rho)
     match = re.search(r"rho([0-9.]+)-refw([0-9.]+)-", sweep.name)
     sweep_label = (
@@ -293,8 +325,20 @@ def main() -> None:
         if match
         else f"SR-OPSD selected run {sweep.name}"
     )
-    analyze("OPSD grouped 8x8", args.opsd_run, args.total_steps, args.eval_every)
-    analyze(sweep_label, sweep, args.total_steps, args.eval_every)
+    analyze(
+        "OPSD grouped 8x8",
+        args.opsd_run,
+        args.total_steps,
+        args.eval_every,
+        args.recent_cycles,
+    )
+    analyze(
+        sweep_label,
+        sweep,
+        args.total_steps,
+        args.eval_every,
+        args.recent_cycles,
+    )
 
 
 if __name__ == "__main__":
