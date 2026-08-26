@@ -8,7 +8,17 @@ case "${METHOD}" in
 esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/common_distil_h200.sh"
+MODEL_SIZE="${MODEL_SIZE:-8b}"
+HARDWARE="${HARDWARE:-h200}"
+case "${MODEL_SIZE}:${HARDWARE}" in
+  8b:h200) source "${SCRIPT_DIR}/common_distil_h200.sh" ;;
+  4b:a800) source "${REPO:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}/scripts/math/train_eval5_n16_a800_4b/common_distil_a800.sh" ;;
+  *)
+    echo "ERROR: supported OPSD pairs are MODEL_SIZE=8b/HARDWARE=h200 and MODEL_SIZE=4b/HARDWARE=a800" >&2
+    exit 2
+    ;;
+esac
+source "${REPO}/scripts/math/lock_protocol.sh"
 
 MAX_STEPS="${MAX_STEPS:-100}"
 SCHEDULER_HORIZON_STEPS="${SCHEDULER_HORIZON_STEPS:-420}"
@@ -32,11 +42,27 @@ TOP_K="${TOP_K:-20}"
 MAX_COMPLETION_LENGTH="${MAX_COMPLETION_LENGTH:-16384}"
 MAIN_PROCESS_PORT="${MAIN_PROCESS_PORT:-29610}"
 
-RUN_NAME="${RUN_NAME_OVERRIDE:-opsd-8b-seed0-lr5e-6-bs1-ga8-steps100-sched420-beta0-clip0.06-topk100-temp0.7-tok16384-eval5-n16-h200}"
 LOSS_MODE=jsd
 BETA=0
-JSD_TOKEN_CLIP="${JSD_TOKEN_CLIP:-0.06}"
-VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.42}"
+case "${MODEL_SIZE}:${HARDWARE}" in
+  8b:h200)
+    JSD_TOKEN_CLIP="${JSD_TOKEN_CLIP:-0.06}"
+    VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.42}"
+    EVAL_TEMPERATURE=1.0
+    EVAL_TOP_P=1.0
+    EVAL_TOP_K=-1
+    EVAL_MAX_NEW_TOKENS=38912
+    ;;
+  4b:a800)
+    JSD_TOKEN_CLIP="${JSD_TOKEN_CLIP:-0.05}"
+    VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.45}"
+    EVAL_TEMPERATURE=0.7
+    EVAL_TOP_P=0.95
+    EVAL_TOP_K=20
+    EVAL_MAX_NEW_TOKENS=16384
+    ;;
+esac
+RUN_NAME="${RUN_NAME_OVERRIDE:-opsd-${MODEL_SIZE}-seed${SEED}-lr${LR}-bs1-ga${GRADIENT_ACCUMULATION_STEPS}-steps${MAX_STEPS}-sched${SCHEDULER_HORIZON_STEPS}-beta0-clip${JSD_TOKEN_CLIP}-topk100-temp${ROLLOUT_TEMPERATURE}-tok${MAX_COMPLETION_LENGTH}-eval${EVAL_FREQUENCY}-n${VAL_N}-${HARDWARE}}"
 OPSD_CODE_ROOT="${OPSD_CODE_ROOT:-${BASELINE_OPSD}}"
 
 (( MAX_STEPS > 0 )) || { echo "ERROR: MAX_STEPS must be positive" >&2; exit 2; }
@@ -82,6 +108,8 @@ METRICS_JSONL="${RUN_ROOT}/training_metrics.jsonl"
 mkdir -p "${TRAIN_OUTPUT_DIR}" "${RESULT_ROOT}" "${LOG_ROOT}" "${STATE_ROOT}"
 
 TRAIN_DATA_SHA256="$(sha256sum "${MATH_TRAIN_DATA}" | awk '{print $1}')"
+MODEL_CONFIG_SHA256="$(sha256sum "${BASE_MODEL_DIR}/config.json" | awk '{print $1}')"
+TOKENIZER_CONFIG_SHA256="$(sha256sum "${BASE_MODEL_DIR}/tokenizer_config.json" | awk '{print $1}')"
 CODE_COMMIT="$(git -C "${REPO}" rev-parse HEAD 2>/dev/null || printf 'unknown')"
 
 exec 9>"${STATE_ROOT}/pipeline.lock"
@@ -92,12 +120,69 @@ exec > >(tee -a "${LAUNCH_LOG}") 2>&1
 export SDPO_METRICS_JSONL="${METRICS_JSONL}"
 export SWANLAB_RUN_ID_FILE="${STATE_ROOT}/disabled_swanlab_run_id.txt"
 
+PROTOCOL_CANDIDATE="${STATE_ROOT}/protocol.env.candidate.$$"
+cat >"${PROTOCOL_CANDIDATE}" <<EOF
+method=opsd
+framework=distIL-TRL
+model_size=${MODEL_SIZE}
+hardware=${HARDWARE}
+model_path=${BASE_MODEL_DIR}
+model_config_sha256=${MODEL_CONFIG_SHA256}
+tokenizer_config_sha256=${TOKENIZER_CONFIG_SHA256}
+training_dataset_sha256=${TRAIN_DATA_SHA256}
+evaluation_data_root=${MATH_EVAL_DATA_ROOT}
+seed=${SEED}
+num_gpus=8
+per_device_batch_size=1
+gradient_accumulation_steps=${GRADIENT_ACCUMULATION_STEPS}
+unique_prompts_per_optimizer_step=${UNIQUE_PROMPTS_PER_OPTIMIZER_STEP}
+rollouts_per_question=${ROLLOUTS_PER_QUESTION}
+training_trajectories_per_optimizer_step=${TRAJECTORIES_PER_OPTIMIZER_STEP}
+grouped_rollout_sampling=$([[ ${GROUPED_ROLLOUTS_PER_PROMPT} -gt 1 ]] && echo true || echo false)
+loss_mode=${LOSS_MODE}
+beta=${BETA}
+jsd_token_clip=${JSD_TOKEN_CLIP}
+top_k_loss=100
+fixed_teacher=true
+learning_rate=${LR}
+lr_scheduler=linear
+warmup_steps=0
+weight_decay=0
+gradient_clip=0.1
+max_response_length=${MAX_COMPLETION_LENGTH}
+training_temperature=${ROLLOUT_TEMPERATURE}
+training_top_p=${TOP_P}
+training_top_k=${TOP_K}
+total_training_steps=${SCHEDULER_HORIZON_STEPS}
+physical_stop_step=${MAX_STEPS}
+lora_rank=64
+lora_alpha=128
+evaluation_frequency=${EVAL_FREQUENCY}
+evaluation_samples_per_question=${VAL_N}
+evaluation_datasets=aime24,aime25,hmmt25,amc23,minerva
+evaluation_thinking=true
+evaluation_temperature=${EVAL_TEMPERATURE}
+evaluation_top_p=${EVAL_TOP_P}
+evaluation_top_k=${EVAL_TOP_K}
+evaluation_max_new_tokens=${EVAL_MAX_NEW_TOKENS}
+evaluation_tensor_parallel_size=8
+evaluation_submission_mode=${EVAL_SUBMISSION_MODE}
+evaluation_prompt_batch_size=${EVAL_PROMPT_BATCH_SIZE}
+EOF
+lock_protocol_file "${STATE_ROOT}/protocol.env" "${PROTOCOL_CANDIDATE}"
+PROTOCOL_SHA256="$(sha256sum "${STATE_ROOT}/protocol.env" | awk '{print $1}')"
+
 cat >"${STATE_ROOT}/parameters.env" <<EOF
 method=opsd
 framework=distIL-TRL
 code_commit=${CODE_COMMIT}
+protocol_sha256=${PROTOCOL_SHA256}
 opsd_code_root=${OPSD_CODE_ROOT}
+model_size=${MODEL_SIZE}
+hardware=${HARDWARE}
 model=${BASE_MODEL_DIR}
+model_config_sha256=${MODEL_CONFIG_SHA256}
+tokenizer_config_sha256=${TOKENIZER_CONFIG_SHA256}
 training_dataset=${MATH_TRAIN_DATA}
 training_dataset_sha256=${TRAIN_DATA_SHA256}
 seed=${SEED}
@@ -108,12 +193,33 @@ unique_prompts_per_optimizer_step=${UNIQUE_PROMPTS_PER_OPTIMIZER_STEP}
 rollouts_per_question=${ROLLOUTS_PER_QUESTION}
 training_trajectories_per_optimizer_step=${TRAJECTORIES_PER_OPTIMIZER_STEP}
 grouped_rollout_sampling=$([[ ${GROUPED_ROLLOUTS_PER_PROMPT} -gt 1 ]] && echo true || echo false)
+loss_mode=${LOSS_MODE}
+beta=${BETA}
+jsd_token_clip=${JSD_TOKEN_CLIP}
+top_k_loss=100
+fixed_teacher=true
 learning_rate=${LR}
 lr_scheduler=linear
 warmup_steps=0
+weight_decay=0
+gradient_clip=0.1
 max_response_length=${MAX_COMPLETION_LENGTH}
+training_temperature=${ROLLOUT_TEMPERATURE}
+training_top_p=${TOP_P}
+training_top_k=${TOP_K}
+total_training_steps=${SCHEDULER_HORIZON_STEPS}
+physical_stop_step=${MAX_STEPS}
+lora_rank=64
+lora_alpha=128
 evaluation_frequency=${EVAL_FREQUENCY}
 evaluation_samples_per_question=${VAL_N}
+evaluation_datasets=aime24,aime25,hmmt25,amc23,minerva
+evaluation_thinking=true
+evaluation_temperature=${EVAL_TEMPERATURE}
+evaluation_top_p=${EVAL_TOP_P}
+evaluation_top_k=${EVAL_TOP_K}
+evaluation_max_new_tokens=${EVAL_MAX_NEW_TOKENS}
+evaluation_tensor_parallel_size=8
 evaluation_submission_mode=${EVAL_SUBMISSION_MODE}
 evaluation_prompt_batch_size=${EVAL_PROMPT_BATCH_SIZE}
 EOF
@@ -246,14 +352,16 @@ evaluate_step() (
   PYTHONPATH="$(eval_pythonpath)" \
   PYTHON_BIN="${ENV_DIR}/bin/python" \
   MODEL_DIR="${BASE_MODEL_DIR}" \
+  TOKENIZER_DIR="${BASE_MODEL_DIR}" \
   LORA_ADAPTER_DIR="${checkpoint}" \
-  MODEL_SIZE=8b \
+  MODEL_SIZE="${MODEL_SIZE}" \
   OUTPUT_DIR="${result_dir}" \
   VAL_N="${VAL_N}" \
   TENSOR_PARALLEL_SIZE=8 \
   EVAL_GPU_MEMORY_UTILIZATION="${EVAL_GPU_MEMORY_UTILIZATION:-0.90}" \
   EVAL_SUBMISSION_MODE="${EVAL_SUBMISSION_MODE}" \
   EVAL_PROMPT_BATCH_SIZE="${EVAL_PROMPT_BATCH_SIZE}" \
+  EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS}" \
   MATH_EVAL_DATA_ROOT="${MATH_EVAL_DATA_ROOT}" \
     bash "${REPO}/scripts/math/eval_sr_opsd_verl_math.sh"
   result_complete "${step}"
@@ -273,11 +381,12 @@ remove_older_checkpoints() {
 }
 
 echo "============================================================"
-echo "Qwen3-8B ${METHOD} train/evaluate pipeline"
+echo "Qwen3-${MODEL_SIZE^^} ${METHOD} train/evaluate pipeline"
 echo "host=$(hostname)"
+echo "hardware=${HARDWARE}"
 echo "training=${MAX_STEPS} steps; scheduler horizon=${SCHEDULER_HORIZON_STEPS}; eval every ${EVAL_FREQUENCY} steps"
 echo "sampling=${UNIQUE_PROMPTS_PER_OPTIMIZER_STEP} unique prompts x ${ROLLOUTS_PER_QUESTION} rollouts = ${TRAJECTORIES_PER_OPTIMIZER_STEP} trajectories per optimizer step"
-echo "evaluation=five math datasets; thinking; N=${VAL_N}; TP=8; submission=${EVAL_SUBMISSION_MODE}"
+echo "evaluation=five math datasets; thinking; N=${VAL_N}; TP=8; max_new_tokens=${EVAL_MAX_NEW_TOKENS}; submission=${EVAL_SUBMISSION_MODE}"
 echo "checkpoint_policy=retain current resume point only; delete after next checkpoint; delete final after eval"
 echo "output=${RUN_ROOT}"
 echo "online_loggers=disabled"
@@ -316,5 +425,5 @@ done
 result_complete "${MAX_STEPS}"
 remove_checkpoint "${MAX_STEPS}"
 touch "${STATE_ROOT}/complete"
-echo "COMPLETE: ${METHOD} trained through step ${MAX_STEPS} and all scheduled checkpoints were evaluated at N=${VAL_N}"
+echo "COMPLETE: Qwen3-${MODEL_SIZE^^} ${METHOD} trained through step ${MAX_STEPS} and all scheduled checkpoints were evaluated at N=${VAL_N}"
 echo "results=${RESULT_ROOT}"

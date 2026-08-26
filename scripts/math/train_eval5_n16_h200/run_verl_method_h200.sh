@@ -11,6 +11,7 @@ ROOT="${ROOT:-/media/damoxing/che-liu-fileset/ylong/sdpo}"
 REPO="${REPO:-${ROOT}/code/distIL-sr-opsd-renyi}"
 UNIFIED_ENV_ACTIVATE="${REPO}/scripts/math/unified_env/activate_unified_math_env.sh"
 source "${UNIFIED_ENV_ACTIVATE}" verl
+source "${REPO}/scripts/math/lock_protocol.sh"
 PYTHON_BIN="${ENV_DIR}/bin/python"
 MODEL_SIZE="${MODEL_SIZE:-8b}"
 HARDWARE="${HARDWARE:-h200}"
@@ -50,6 +51,18 @@ case "${MODEL_SIZE}:${METHOD}" in
   8b:*) EVAL_MAX_NEW_TOKENS=38912 ;;
   4b:*) EVAL_MAX_NEW_TOKENS=16384 ;;
 esac
+case "${MODEL_SIZE}" in
+  4b)
+    EVAL_TEMPERATURE=0.7
+    EVAL_TOP_P=0.95
+    EVAL_TOP_K=20
+    ;;
+  8b)
+    EVAL_TEMPERATURE=1.0
+    EVAL_TOP_P=1.0
+    EVAL_TOP_K=-1
+    ;;
+esac
 EVAL_SUBMISSION_MODE="${EVAL_SUBMISSION_MODE:-legacy_all_prompts}"
 case "${EVAL_SUBMISSION_MODE}" in
   legacy_all_prompts) EVAL_PROMPT_BATCH_SIZE=0 ;;
@@ -63,18 +76,27 @@ case "${METHOD}" in
     METHOD_DIR=grpo
     RUN_NAME="grpo-${MODEL_SIZE}-seed0-native-verl-lr5e-6-trainbs8-mbs8-rolloutn8-eps0.2-temp0.7-tok16384-steps100-sched420-eval5-n16-${HARDWARE}"
     METHOD_DESCRIPTION="GRPO; epsilon=0.2; group-normalized advantages"
+    EFFECTIVE_DIVERGENCE_ALPHA=NA
+    EFFECTIVE_RENYI_ORDER=NA
+    EFFECTIVE_SELF_REFERENCE_WEIGHT=NA
     ;;
   sdpo)
     METHOD_LABEL="SDPO (RKL)"
     METHOD_DIR=sdpo
     RUN_NAME="sdpo-${MODEL_SIZE}-seed0-native-verl-rkl-ema0.05-lr5e-6-trainbs8-mbs8-rolloutn8-topk100-tailFalse-clip0.05-temp0.7-tok16384-steps100-sched420-eval5-n16-${HARDWARE}"
     METHOD_DESCRIPTION="Reverse KL; EMA teacher=0.05; no frozen-reference anchoring"
+    EFFECTIVE_DIVERGENCE_ALPHA=1.0
+    EFFECTIVE_RENYI_ORDER=NA
+    EFFECTIVE_SELF_REFERENCE_WEIGHT=0.0
     ;;
   sr_opsd)
     METHOD_LABEL=SR-OPSD
     METHOD_DIR=sr_opsd
     RUN_NAME="sr-opsd-${MODEL_SIZE}-seed0-native-verl-forward-renyi-rho${RENYI_ORDER}-refw${SELF_REFERENCE_WEIGHT}-sync0-ema0.05-lr5e-6-trainbs8-mbs8-rolloutn8-topk100-tailFalse-clip0.05-temp0.7-tok16384-steps100-sched420-eval5-n16-${HARDWARE}"
     METHOD_DESCRIPTION="Forward Renyi rho=${RENYI_ORDER}; self-reference=${SELF_REFERENCE_WEIGHT}; frozen reference sync=0"
+    EFFECTIVE_DIVERGENCE_ALPHA=${DIVERGENCE_ALPHA}
+    EFFECTIVE_RENYI_ORDER=${RENYI_ORDER}
+    EFFECTIVE_SELF_REFERENCE_WEIGHT=${SELF_REFERENCE_WEIGHT}
     ;;
 esac
 
@@ -147,6 +169,7 @@ test -f "${SITE_PACKAGES}/tokenizers/__init__.py"
 test -f "${SITE_PACKAGES}/vllm/version.py"
 compgen -G "${SITE_PACKAGES}/vllm/_C*.so" >/dev/null
 test -f "${MODEL_PATH}/config.json"
+test -f "${MODEL_PATH}/tokenizer_config.json"
 test -f "${REPO}/SDPO/datasets/math_probs/train.json"
 test -f "${REPO}/SDPO/datasets/math_probs/test.json"
 test -f "${REPO}/SDPO/run_local_math_verl.sh"
@@ -155,18 +178,86 @@ test -f "${REPO}/scripts/math/validate_math_eval.py"
 test -f "${KEEPALIVE_SCRIPT}"
 mkdir -p "${RUN_DIR}" "${RESULT_ROOT}" "${MERGED_ROOT}"
 
+TRAIN_DATA_SHA256="$(sha256sum "${REPO}/SDPO/datasets/math_probs/train.json" | awk '{print $1}')"
+MODEL_CONFIG_SHA256="$(sha256sum "${MODEL_PATH}/config.json" | awk '{print $1}')"
+TOKENIZER_CONFIG_SHA256="$(sha256sum "${MODEL_PATH}/tokenizer_config.json" | awk '{print $1}')"
+CODE_COMMIT="$(git -C "${REPO}" rev-parse HEAD 2>/dev/null || printf 'unknown')"
+
 exec 9>"${STATE_ROOT}/pipeline.lock"
 flock -n 9 || { echo "ERROR: ${METHOD_LABEL} pipeline is already running: ${RUN_ROOT}" >&2; exit 3; }
 
-cat >"${STATE_ROOT}/parameters.env" <<EOF
+PROTOCOL_CANDIDATE="${STATE_ROOT}/protocol.env.candidate.$$"
+cat >"${PROTOCOL_CANDIDATE}" <<EOF
 method=${METHOD}
 framework=SDPO-native-VERL
 model_size=${MODEL_SIZE}
 hardware=${HARDWARE}
-model=${MODEL_PATH}
+model_path=${MODEL_PATH}
+model_config_sha256=${MODEL_CONFIG_SHA256}
+tokenizer_config_sha256=${TOKENIZER_CONFIG_SHA256}
+training_dataset_sha256=${TRAIN_DATA_SHA256}
+evaluation_data_root=${MATH_EVAL_DATA_ROOT}
 seed=0
+num_gpus=8
 train_batch_size=${TRAIN_BATCH_SIZE}
 ppo_mini_batch_size=${PPO_MINI_BATCH_SIZE}
+ppo_micro_batch_size_per_gpu=1
+ppo_epochs=1
+rollouts_per_question=${ROLLOUT_N}
+learning_rate=5e-6
+lr_scheduler=linear
+warmup_steps=0
+weight_decay=0
+gradient_clip=0.1
+entropy_coefficient=1e-5
+max_prompt_length=2048
+max_response_length=16384
+max_reprompt_length=16384
+max_model_length=32768
+training_temperature=0.7
+training_top_p=0.95
+training_top_k=20
+total_training_steps=${SCHEDULER_HORIZON_STEPS}
+physical_stop_step=${MAX_STEPS}
+lora_rank=64
+lora_alpha=128
+evaluation_frequency=5
+evaluation_samples_per_question=${VAL_N}
+evaluation_datasets=aime24,aime25,hmmt25,amc23,minerva
+evaluation_thinking=true
+evaluation_temperature=${EVAL_TEMPERATURE}
+evaluation_top_p=${EVAL_TOP_P}
+evaluation_top_k=${EVAL_TOP_K}
+evaluation_max_new_tokens=${EVAL_MAX_NEW_TOKENS}
+evaluation_tensor_parallel_size=8
+evaluation_submission_mode=${EVAL_SUBMISSION_MODE}
+evaluation_prompt_batch_size=${EVAL_PROMPT_BATCH_SIZE}
+divergence_alpha=${EFFECTIVE_DIVERGENCE_ALPHA}
+renyi_order=${EFFECTIVE_RENYI_ORDER}
+self_reference_weight=${EFFECTIVE_SELF_REFERENCE_WEIGHT}
+method_description=${METHOD_DESCRIPTION}
+EOF
+lock_protocol_file "${STATE_ROOT}/protocol.env" "${PROTOCOL_CANDIDATE}"
+PROTOCOL_SHA256="$(sha256sum "${STATE_ROOT}/protocol.env" | awk '{print $1}')"
+
+cat >"${STATE_ROOT}/parameters.env" <<EOF
+method=${METHOD}
+framework=SDPO-native-VERL
+code_commit=${CODE_COMMIT}
+protocol_sha256=${PROTOCOL_SHA256}
+model_size=${MODEL_SIZE}
+hardware=${HARDWARE}
+model=${MODEL_PATH}
+model_config_sha256=${MODEL_CONFIG_SHA256}
+tokenizer_config_sha256=${TOKENIZER_CONFIG_SHA256}
+training_dataset=${REPO}/SDPO/datasets/math_probs/train.json
+training_dataset_sha256=${TRAIN_DATA_SHA256}
+seed=0
+num_gpus=8
+train_batch_size=${TRAIN_BATCH_SIZE}
+ppo_mini_batch_size=${PPO_MINI_BATCH_SIZE}
+ppo_micro_batch_size_per_gpu=1
+ppo_epochs=1
 rollouts_per_question=${ROLLOUT_N}
 learning_rate=5e-6
 lr_scheduler=linear
@@ -185,13 +276,18 @@ physical_stop_step=${MAX_STEPS}
 evaluation_frequency=5
 evaluation_samples_per_question=${VAL_N}
 evaluation_datasets=aime24,aime25,hmmt25,amc23,minerva
+evaluation_thinking=true
+evaluation_temperature=${EVAL_TEMPERATURE}
+evaluation_top_p=${EVAL_TOP_P}
+evaluation_top_k=${EVAL_TOP_K}
 evaluation_submission_mode=${EVAL_SUBMISSION_MODE}
 evaluation_prompt_batch_size=${EVAL_PROMPT_BATCH_SIZE}
 evaluation_max_new_tokens=${EVAL_MAX_NEW_TOKENS}
+evaluation_tensor_parallel_size=8
 evaluation_tokenizer=${MODEL_PATH}
-divergence_alpha=${DIVERGENCE_ALPHA}
-renyi_order=${RENYI_ORDER}
-self_reference_weight=${SELF_REFERENCE_WEIGHT}
+divergence_alpha=${EFFECTIVE_DIVERGENCE_ALPHA}
+renyi_order=${EFFECTIVE_RENYI_ORDER}
+self_reference_weight=${EFFECTIVE_SELF_REFERENCE_WEIGHT}
 method_description=${METHOD_DESCRIPTION}
 EOF
 
@@ -470,6 +566,34 @@ evaluate_step() (
     --local_dir "${actor_dir}" \
     --target_dir "${merged_dir}"
   test -s "${merged_dir}/config.json"
+
+  "${PYTHON_BIN}" - "${MODEL_PATH}" "${merged_dir}" <<'PY'
+import sys
+from pathlib import Path
+
+from transformers import AutoConfig, AutoTokenizer
+
+base_dir, merged_dir = sys.argv[1:]
+base_config = AutoConfig.from_pretrained(base_dir, local_files_only=True, trust_remote_code=True)
+merged_config = AutoConfig.from_pretrained(merged_dir, local_files_only=True, trust_remote_code=True)
+tokenizer = AutoTokenizer.from_pretrained(
+    base_dir,
+    local_files_only=True,
+    trust_remote_code=True,
+    use_fast=True,
+)
+if base_config.eos_token_id != merged_config.eos_token_id:
+    raise RuntimeError(
+        f"merged checkpoint EOS mismatch: base={base_config.eos_token_id}, merged={merged_config.eos_token_id}"
+    )
+if tokenizer.eos_token_id != base_config.eos_token_id:
+    raise RuntimeError(
+        f"tokenizer EOS mismatch: tokenizer={tokenizer.eos_token_id}, model={base_config.eos_token_id}"
+    )
+if not tokenizer.is_fast:
+    raise RuntimeError(f"evaluation tokenizer is not fast: {Path(base_dir)}")
+print(f"Merged checkpoint/tokenizer preflight: PASS (eos={tokenizer.eos_token_id}, fast={tokenizer.is_fast})")
+PY
 
   local lora_adapter_dir=""
   if [[ -s "${merged_dir}/lora_adapter/adapter_config.json" ]]; then

@@ -4,6 +4,8 @@ ROOT="${ROOT:-/media/damoxing/che-liu-fileset/ylong/sdpo}"
 REPO="${REPO:-${ROOT}/code/distIL-sr-opsd-renyi}"
 BASELINE_REPO="${BASELINE_REPO:-${ROOT}/code/distIL}"
 BASELINE_OPSD="${BASELINE_REPO}/OPSD"
+OPSD_CODE_ROOT="${OPSD_CODE_ROOT:-${BASELINE_OPSD}}"
+OPSD_REPO_ROOT="${OPSD_REPO_ROOT:-${BASELINE_REPO}}"
 source "${REPO}/scripts/math/unified_env/activate_unified_math_env.sh" opsd
 TORCH_HEADER_ROOT="${TORCH_HEADER_ROOT:-${ENV_DIR}/lib/python3.11/site-packages/torch/include}"
 TORCH_CXX_HEADER_ROOT="${TORCH_CXX_HEADER_ROOT:-${TORCH_HEADER_ROOT}/torch/csrc/api/include}"
@@ -36,12 +38,12 @@ if [[ -z "${BASE_MODEL_DIR:-}" || ! -s "${BASE_MODEL_DIR}/config.json" ]]; then
   echo "Set BASE_MODEL_DIR to its exact local directory before launching." >&2
   exit 2
 fi
-MATH_TRAIN_DATA="${MATH_TRAIN_DATA:-${BASELINE_OPSD}/data/math/train.jsonl}"
+MATH_TRAIN_DATA="${MATH_TRAIN_DATA:-${OPSD_CODE_ROOT}/data/math/train.jsonl}"
 MATH_EVAL_DATA_ROOT="${MATH_EVAL_DATA_ROOT:-${ROOT}/data/math_eval}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/math_4b_train_eval5_n16_a800_20260812}"
 TORCH_EXTENSIONS_DIR="${TORCH_EXTENSIONS_DIR:-/media/vlm-ckp-fileset/ylong/sdpo/runtime_extensions/math-torch-a800-v1}"
 
-export ROOT REPO BASELINE_REPO BASELINE_OPSD ENV_DIR
+export ROOT REPO BASELINE_REPO BASELINE_OPSD OPSD_CODE_ROOT OPSD_REPO_ROOT ENV_DIR
 export TORCH_HEADER_ROOT TORCH_CXX_HEADER_ROOT SITE_PACKAGES
 export BASE_MODEL_DIR MATH_TRAIN_DATA MATH_EVAL_DATA_ROOT OUTPUT_ROOT TORCH_EXTENSIONS_DIR
 unset SETUPTOOLS_USE_DISTUTILS
@@ -56,12 +58,13 @@ require_executable() {
 
 require_executable "${ENV_DIR}/bin/python"
 require_executable "${ENV_DIR}/bin/accelerate"
-require_file "${BASELINE_OPSD}/accelerate.yaml"
-require_file "${BASELINE_OPSD}/opsd_train.py"
+require_file "${OPSD_CODE_ROOT}/accelerate.yaml"
+require_file "${OPSD_CODE_ROOT}/opsd_train.py"
 require_file "${REPO}/scripts/math/eval_sr_opsd_verl_math.sh"
 require_file "${REPO}/scripts/math/validate_math_eval.py"
 require_file "${REPO}/OPSD/eval/evaluate_math.py"
 require_file "${BASE_MODEL_DIR}/config.json"
+require_file "${BASE_MODEL_DIR}/tokenizer_config.json"
 require_file "${MATH_TRAIN_DATA}"
 require_file "${ENV_DIR}/.math-env-complete"
 require_executable "${SITE_PACKAGES}/torch/bin/torch_shm_manager"
@@ -71,7 +74,7 @@ require_file "${SITE_PACKAGES}/flash_attn/__init__.py"
 compgen -G "${SITE_PACKAGES}/flash_attn_2_cuda*.so" >/dev/null
 compgen -G "${SITE_PACKAGES}/vllm/_C*.so" >/dev/null
 
-export PYTHONPATH="${BASELINE_OPSD}:${BASELINE_REPO}"
+export PYTHONPATH="${OPSD_CODE_ROOT}:${OPSD_REPO_ROOT}"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 export TOKENIZERS_PARALLELISM=false
 export PYTHONUNBUFFERED=1
@@ -98,19 +101,19 @@ unset WANDB_API_KEY WANDB_ENTITY WANDB_PROJECT
 unset PYTORCH_CUDA_ALLOC_CONF PYTORCH_ALLOC_CONF
 mkdir -p "${TORCH_EXTENSIONS_DIR}" "${HOME}/.triton/autotune"
 
-for script in "${BASELINE_OPSD}/opsd_train.py"; do
+for script in "${OPSD_CODE_ROOT}/opsd_train.py"; do
   grep -q "selected_checkpoint_steps" "${script}" || {
-    echo "ERROR: baseline runner lacks selected_checkpoint_steps: ${script}" >&2
+    echo "ERROR: OPSD runner lacks selected_checkpoint_steps: ${script}" >&2
     exit 2
   }
   grep -q "stop_after_step" "${script}" || {
-    echo "ERROR: baseline runner lacks stop_after_step: ${script}" >&2
+    echo "ERROR: OPSD runner lacks stop_after_step: ${script}" >&2
     exit 2
   }
 done
 
 distil_pythonpath() {
-  printf '%s' "${BASELINE_OPSD}:${BASELINE_REPO}"
+  printf '%s' "${OPSD_CODE_ROOT}:${OPSD_REPO_ROOT}"
 }
 
 eval_pythonpath() {
