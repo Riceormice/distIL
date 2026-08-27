@@ -101,7 +101,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path(
             "/media/vlm-ckp-fileset/ylong/"
-            "math_grpo_8b_native_verl_eval5_n16_h200_20260827"
+            "math_grpo_8b_opsd_trl_aligned_eval5_n16_h200_20260827"
         ),
     )
     parser.add_argument(
@@ -109,7 +109,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path(
             "/media/vlm-ckp-fileset/ylong/"
-            "math_grpo_4b_native_verl_eval5_n16_a800_20260827"
+            "math_grpo_4b_opsd_trl_aligned_eval5_n16_a800_20260827"
         ),
     )
     parser.add_argument(
@@ -197,27 +197,33 @@ def run_specs(
             "8b-opsd-grouped8x8-h200",
         )
     )
-    grpo_8b_name = next(row[2] for row in names_8b if row[0] == "grpo")
-    grpo_4b_name = next(row[2] for row in names_4b if row[0] == "grpo")
+    grpo_8b_name = (
+        "grpo-8b-seed0-opsd-trl-q8-r8-lr5e-6-eps0.2-lora64a128-"
+        "temp0.7-tok16384-steps100-sched420-eval5-n16-h200"
+    )
+    grpo_4b_name = (
+        "grpo-4b-seed0-opsd-trl-q8-r8-lr5e-6-eps0.2-lora64a128-"
+        "temp0.7-tok16384-steps100-sched420-eval5-n16-a800"
+    )
     specs.extend(
         (
             RunSpec(
                 "8B",
                 "H200",
                 "grpo",
-                "GRPO-NativeFixed",
+                "GRPO-OPSDTRLAligned",
                 grpo_8b_name,
                 grpo_8b_current_root,
-                "8b-grpo-nativefixed-h200-20260827",
+                "8b-grpo-opsdtrl-aligned-h200-20260827",
             ),
             RunSpec(
                 "4B",
                 "A800",
                 "grpo",
-                "GRPO-NativeFixed",
+                "GRPO-OPSDTRLAligned",
                 grpo_4b_name,
                 grpo_4b_current_root,
-                "4b-grpo-nativefixed-a800-20260827",
+                "4b-grpo-opsdtrl-aligned-a800-20260827",
             ),
             RunSpec(
                 "8B",

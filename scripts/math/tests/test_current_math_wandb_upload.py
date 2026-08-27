@@ -54,7 +54,7 @@ class CurrentMathInventoryTest(unittest.TestCase):
         run_ids = [common.run_id_for(item) for item in specs]
 
         self.assertEqual(len(set(run_ids)), len(run_ids))
-        self.assertIn("GRPO-NativeFixed", {item.method_label for item in specs})
+        self.assertIn("GRPO-OPSDTRLAligned", {item.method_label for item in specs})
         self.assertIn(
             "OPSD-Grouped8x8-LegacyAllPrompts",
             {item.method_label for item in specs},
@@ -64,8 +64,8 @@ class CurrentMathInventoryTest(unittest.TestCase):
         roots = [Path(f"/tmp/math-wandb-root-{index}") for index in range(7)]
         main_specs = common.run_specs(*roots)
         expected_profiles = {
-            "8b-grpo-nativefixed-h200-20260827",
-            "4b-grpo-nativefixed-a800-20260827",
+            "8b-grpo-opsdtrl-aligned-h200-20260827",
+            "4b-grpo-opsdtrl-aligned-a800-20260827",
             "8b-opsd-grouped8x8-legacyallprompts-h200-20260825",
             "4b-opsd-grouped8x8-a800-20260827",
         }

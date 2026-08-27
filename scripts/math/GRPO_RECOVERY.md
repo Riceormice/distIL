@@ -12,18 +12,22 @@ The previous GRPO failures had two independent causes.
    tokens and appeared stalled. The aligned protocol already bounds GRPO
    evaluation at 16384 tokens; this repair keeps that value unchanged.
 
-`scripts/math/run_grpo_4b.sh` and `scripts/math/run_grpo_8b.sh` are now canonical
-wrappers around the native VERL train/evaluate pipeline. They no longer invoke
-the obsolete four-process TRL launcher. The pipeline uses a self-contained
-runtime preflight, validates checkpoint structure and tokenizer/EOS metadata,
-and stores an immutable `state/protocol.env`. A resumed run is rejected if any
-core training or evaluation field differs. Their default output roots are new
-dated directories, so suspect legacy checkpoint-5 files are not silently reused.
+`scripts/math/run_grpo_4b.sh` and `scripts/math/run_grpo_8b.sh` now restore the
+historically successful OPSD/TRL implementation, but with eight processes and
+the current matched protocol. The trainer consumes the local 758-row dataset,
+disables training thinking, forces selected checkpoints, stops without
+shortening the scheduler horizon, and resumes only a complete checkpoint. It
+does not initialize W&B when `report_to=none`.
 
-The fixed protocol is: 758 training questions, seed 0, eight GPUs, train batch
-8, mini-batch 8, eight rollouts per question, learning rate 5e-6, linear
-schedule, zero warmup, response length 16384, and training decoding
-0.7/0.95/20. It runs 100 physical steps with a 420-step scheduler horizon and
-evaluates every five steps on five math datasets with N=16. Qwen3-4B evaluation
-uses 0.7/0.95/20 and 16384 tokens; Qwen3-8B GRPO evaluation uses 1.0/1.0/-1 and
-16384 tokens.
+The pipeline uses the unified OPSD environment, validates checkpoint structure,
+and stores an immutable `state/protocol.env`. A resumed run is rejected if any
+core training or evaluation field differs. Its output roots are separate from
+both the failed native-VERL jobs and older OPSD jobs.
+
+The fixed protocol is: 758 training questions, seed 0, eight GPUs, eight unique
+questions by eight rollouts, one policy iteration, GRPO epsilon 0.2, LoRA
+64/128, learning rate 5e-6, linear schedule, zero warmup, response length
+16384, and training decoding 0.7/0.95/20. It runs 100 physical steps with a
+420-step scheduler horizon and evaluates every five steps on five math datasets
+with N=16. Qwen3-4B evaluation uses 0.7/0.95/20; Qwen3-8B uses 1.0/1.0/-1.
+Both use the 16384-token evaluation cap.

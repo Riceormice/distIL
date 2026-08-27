@@ -3,8 +3,9 @@
 The mathematics pipelines use two complete, versioned environments under
 `/media/damoxing/che-liu-fileset/ylong/sdpo/envs`:
 
-- `math-verl-current`: GRPO, SDPO, and SR-OPSD using native VERL.
-- `math-opsd-current`: OPSD training and distIL mathematics evaluation.
+- `math-verl-current`: SDPO and SR-OPSD using native VERL (the direct VERL
+  GRPO path remains available only for diagnostics).
+- `math-opsd-current`: GRPO and OPSD training plus distIL mathematics evaluation.
 
 Each `current` path is an atomic symlink to a versioned environment. Package
 files and compiled extensions live inside that versioned prefix. The launchers

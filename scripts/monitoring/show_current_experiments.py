@@ -39,6 +39,22 @@ def parse_args() -> argparse.Namespace:
         default=Path("/media/vlm-ckp-fileset/ylong/math_4b_train_eval5_n16_a800_20260812"),
     )
     parser.add_argument(
+        "--grpo-8b-root",
+        type=Path,
+        default=Path(
+            "/media/vlm-ckp-fileset/ylong/"
+            "math_grpo_8b_opsd_trl_aligned_eval5_n16_h200_20260827"
+        ),
+    )
+    parser.add_argument(
+        "--grpo-4b-root",
+        type=Path,
+        default=Path(
+            "/media/vlm-ckp-fileset/ylong/"
+            "math_grpo_4b_opsd_trl_aligned_eval5_n16_a800_20260827"
+        ),
+    )
+    parser.add_argument(
         "--sweep-root",
         type=Path,
         default=Path("/media/vlm-ckp-fileset/ylong/sr_opsd_math_alpha_rho_sweep_20260819"),
@@ -66,9 +82,9 @@ def build_specs(args: argparse.Namespace) -> list[RunSpec]:
     hroot, aroot = args.h200_root, args.a800_root
     specs = [
         RunSpec(
-            "Math-8B GRPO",
-            hroot / "grpo",
-            "grpo-8b-seed0-native-verl-lr5e-6-trainbs8-mbs8-rolloutn8-eps0.2-"
+            "Math-8B GRPO OPSD",
+            args.grpo_8b_root / "grpo",
+            "grpo-8b-seed0-opsd-trl-q8-r8-lr5e-6-eps0.2-lora64a128-"
             "temp0.7-tok16384-steps100-sched420-eval5-n16-h200",
             100,
         ),
@@ -96,9 +112,9 @@ def build_specs(args: argparse.Namespace) -> list[RunSpec]:
             100,
         ),
         RunSpec(
-            "Math-4B GRPO",
-            aroot / "grpo",
-            "grpo-4b-seed0-native-verl-lr5e-6-trainbs8-mbs8-rolloutn8-eps0.2-"
+            "Math-4B GRPO OPSD",
+            args.grpo_4b_root / "grpo",
+            "grpo-4b-seed0-opsd-trl-q8-r8-lr5e-6-eps0.2-lora64a128-"
             "temp0.7-tok16384-steps100-sched420-eval5-n16-a800",
             100,
         ),

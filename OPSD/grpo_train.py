@@ -1,11 +1,15 @@
+import json
 import os
-import wandb
 import re
+import time
+from pathlib import Path
+
+import wandb
 
 from math_verify import parse, verify
 
 from datasets import load_dataset
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, TrainerCallback
 
 from trl import (
     GRPOTrainer,
@@ -44,6 +48,139 @@ class CustomScriptArguments(ScriptArguments):
         default="grpo-training",
         metadata={"help": "WandB project name to log runs under."},
     )
+    enable_thinking: bool = field(
+        default=False,
+        metadata={"help": "Enable Qwen3 thinking mode while generating training rollouts."},
+    )
+    selected_checkpoint_steps: str = field(
+        default="",
+        metadata={"help": "Comma-separated optimizer steps at which checkpoints are forced."},
+    )
+    stop_after_step: int = field(
+        default=0,
+        metadata={"help": "Stop cleanly after this optimizer step without changing the scheduler horizon."},
+    )
+    auto_resume: bool = field(
+        default=False,
+        metadata={"help": "Resume from the highest complete checkpoint in output_dir."},
+    )
+    save_final_model: bool = field(
+        default=True,
+        metadata={"help": "Save an additional final adapter directly in output_dir."},
+    )
+
+
+class SelectedCheckpointCallback(TrainerCallback):
+    def __init__(self, steps: set[int]):
+        self.steps = steps
+
+    def on_step_end(self, args, state, control, **kwargs):
+        control.should_save = control.should_save or state.global_step in self.steps
+        return control
+
+
+class StopAfterStepCallback(TrainerCallback):
+    def __init__(self, stop_after_step: int):
+        self.stop_after_step = int(stop_after_step)
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if self.stop_after_step > 0 and state.global_step >= self.stop_after_step:
+            control.should_training_stop = True
+        return control
+
+
+class JsonlMetricsCallback(TrainerCallback):
+    """Persist numeric Trainer logs so checkpoint cleanup does not erase curves."""
+
+    def __init__(self, path: str):
+        self.path = Path(path)
+        self.step_started_at = None
+        self.step_seconds = None
+
+    def on_step_begin(self, args, state, control, **kwargs):
+        self.step_started_at = time.perf_counter()
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if self.step_started_at is not None:
+            self.step_seconds = time.perf_counter() - self.step_started_at
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if not state.is_world_process_zero or state.global_step <= 0:
+            return
+        data = {
+            str(key): value
+            for key, value in (logs or {}).items()
+            if isinstance(value, (bool, int, float))
+        }
+        if self.step_seconds is not None:
+            data["timing_s/step"] = self.step_seconds
+        record = {
+            "step": int(state.global_step),
+            "timestamp": time.time(),
+            "data": data,
+        }
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        try:
+            os.write(fd, payload)
+        finally:
+            os.close(fd)
+
+
+def _parse_checkpoint_steps(raw_steps: str) -> set[int]:
+    steps = {int(part.strip()) for part in raw_steps.split(",") if part.strip()}
+    if any(step <= 0 for step in steps):
+        raise ValueError(f"selected_checkpoint_steps must contain positive integers: {raw_steps}")
+    return steps
+
+
+def _checkpoint_is_complete(checkpoint: Path, step: int) -> bool:
+    trainer_state = checkpoint / "trainer_state.json"
+    if not trainer_state.is_file():
+        return False
+    try:
+        state = json.loads(trainer_state.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    try:
+        saved_step = int(state.get("global_step", -1))
+    except (TypeError, ValueError):
+        return False
+    if saved_step != step:
+        return False
+
+    model_saved = any(
+        (checkpoint / name).is_file()
+        for name in (
+            "adapter_model.safetensors",
+            "adapter_model.bin",
+            "model.safetensors",
+            "pytorch_model.bin",
+        )
+    )
+    optimizer_saved = (checkpoint / "optimizer.pt").is_file() or any(checkpoint.glob("global_step*"))
+    return model_saved and optimizer_saved
+
+
+def _latest_checkpoint(output_dir: str) -> str | None:
+    checkpoints = []
+    for checkpoint in Path(output_dir).glob("checkpoint-*"):
+        match = re.fullmatch(r"checkpoint-(\d+)", checkpoint.name)
+        if match is None:
+            continue
+        step = int(match.group(1))
+        if _checkpoint_is_complete(checkpoint, step):
+            checkpoints.append((step, checkpoint))
+    return str(max(checkpoints)[1]) if checkpoints else None
+
+
+def _uses_wandb(report_to) -> bool:
+    if isinstance(report_to, str):
+        targets = {part.strip().lower() for part in report_to.split(",")}
+    else:
+        targets = {str(part).lower() for part in (report_to or [])}
+    return "wandb" in targets
 
 
 def extract_boxed_answer(text):
@@ -114,27 +251,62 @@ def reward_correctness(completions, Answer, **kwargs):
     return rewards
 
 
-def make_format_prompt(tokenizer):
+def make_format_prompt(tokenizer, enable_thinking=False):
     """
     Returns a formatting function that applies the tokenizer's chat template.
     """
 
     def format_prompt(example):
+        question = example.get("Question") or example.get("problem") or example.get("prompt")
+        answer = example.get("Answer") or example.get("answer")
+        if not isinstance(question, str) or not question.strip():
+            raise ValueError(f"Math record is missing a non-empty question: {sorted(example)}")
+        if not isinstance(answer, str) or not answer.strip():
+            raise ValueError(f"Math record is missing a non-empty answer: {sorted(example)}")
+
+        question = question.strip()
+        if "put your final answer within \\boxed{}" not in question:
+            question = f"{question}\n\nPlease reason step by step, and put your final answer within \\boxed{{}}."
         messages = [
             {
                 "role": "user",
-                "content": f"Problem: {example['Question']}\nPlease reason step by step, and put your final answer within \\boxed{{}}.",
+                "content": question,
             }
         ]
-        prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        return {"prompt": prompt, "Answer": example["Answer"]}
+        prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=enable_thinking,
+        )
+        return {"prompt": prompt, "Answer": answer.strip()}
 
     return format_prompt
+
+
+def load_math_dataset(dataset_name: str):
+    if not dataset_name:
+        raise ValueError("--dataset_name must identify the exact local Math dataset or Hugging Face dataset")
+
+    dataset_path = Path(dataset_name).expanduser()
+    if dataset_path.is_file():
+        suffix = dataset_path.suffix.lower()
+        if suffix in {".json", ".jsonl"}:
+            return load_dataset("json", data_files=str(dataset_path), split="train")
+        if suffix == ".parquet":
+            return load_dataset("parquet", data_files=str(dataset_path), split="train")
+        raise ValueError(f"Unsupported local dataset format: {dataset_path}")
+
+    dataset = load_dataset(dataset_name)
+    if hasattr(dataset, "keys") and "train" in dataset:
+        return dataset["train"]
+    return dataset
 
 
 if __name__ == "__main__":
     parser = TrlParser((CustomScriptArguments, GRPOConfig, ModelConfig))
     script_args, training_args, model_args = parser.parse_args_and_config()
+    checkpoint_steps = _parse_checkpoint_steps(script_args.selected_checkpoint_steps)
 
     ################
     # WandB Run Name & Output Directory
@@ -155,8 +327,6 @@ if __name__ == "__main__":
         full_wandb_run_name = f"{script_args.run_config}_lr{lr_str}_bs{effective_batch_size}"
         # Append run_config to output_dir if it doesn't already end with it
         if not training_args.output_dir.endswith(script_args.run_config):
-            from pathlib import Path
-
             training_args.output_dir = str(Path(training_args.output_dir) / script_args.run_config)
     else:
         # Extract model name from path
@@ -187,7 +357,8 @@ if __name__ == "__main__":
     # WandB Initialization
     ################
     # Only initialize wandb on main process (LOCAL_RANK 0 or not set)
-    if os.environ.get("LOCAL_RANK", "0") == "0":
+    use_wandb = _uses_wandb(training_args.report_to)
+    if use_wandb and os.environ.get("LOCAL_RANK", "0") == "0":
         wandb.init(
             entity=script_args.wandb_entity,
             project=script_args.wandb_project,
@@ -211,6 +382,9 @@ if __name__ == "__main__":
                 "num_processes": num_processes,
                 "loss_type": training_args.loss_type,
                 "scale_rewards": training_args.scale_rewards,
+                "enable_thinking": script_args.enable_thinking,
+                "selected_checkpoint_steps": sorted(checkpoint_steps),
+                "stop_after_step": script_args.stop_after_step,
             },
         )
 
@@ -270,16 +444,12 @@ if __name__ == "__main__":
     ################
     # Dataset
     ################
-    # Load the math dataset with ground truth solutions
-    dataset = load_dataset("siyanzhao/Openthoughts_math_30k_opsd")
-    train_dataset = dataset["train"]
+    train_dataset = load_math_dataset(script_args.dataset_name)
 
     # Apply the format_prompt function to create the expected structure
-    format_prompt = make_format_prompt(tokenizer)
+    format_prompt = make_format_prompt(tokenizer, enable_thinking=script_args.enable_thinking)
     train_dataset = train_dataset.map(format_prompt, remove_columns=train_dataset.column_names)
-    split_dataset = train_dataset.train_test_split(test_size=0.007, seed=42)
-    train_dataset = split_dataset["train"]
-    eval_dataset = split_dataset["test"]
+    print(f"Training dataset: {script_args.dataset_name} ({len(train_dataset)} rows)")
 
     ################
     # Training
@@ -289,23 +459,27 @@ if __name__ == "__main__":
         reward_funcs=reward_correctness,
         args=training_args,
         train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
+        eval_dataset=None,
         processing_class=tokenizer,
         peft_config=get_peft_config(model_args),
     )
 
-    # Auto-resume from latest checkpoint if one exists
-    resume_from_checkpoint = None
-    if os.path.isdir(training_args.output_dir):
-        checkpoints = sorted(
-            [d for d in os.listdir(training_args.output_dir) if d.startswith("checkpoint-")],
-            key=lambda x: int(x.split("-")[-1]),
-        )
-        if checkpoints:
-            resume_from_checkpoint = os.path.join(training_args.output_dir, checkpoints[-1])
-            print(f"Resuming from checkpoint: {resume_from_checkpoint}")
+    if checkpoint_steps:
+        trainer.add_callback(SelectedCheckpointCallback(checkpoint_steps))
+    if script_args.stop_after_step > 0:
+        trainer.add_callback(StopAfterStepCallback(script_args.stop_after_step))
+    metrics_jsonl = os.environ.get("SDPO_METRICS_JSONL", "").strip()
+    if metrics_jsonl:
+        trainer.add_callback(JsonlMetricsCallback(metrics_jsonl))
 
-    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+    resume_from_checkpoint = _latest_checkpoint(training_args.output_dir) if script_args.auto_resume else None
+    if resume_from_checkpoint:
+        print(f"Resuming from checkpoint: {resume_from_checkpoint}")
 
-    # Save model
-    trainer.save_model(training_args.output_dir)
+    try:
+        trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+        if script_args.save_final_model:
+            trainer.save_model(training_args.output_dir)
+    finally:
+        if use_wandb and os.environ.get("LOCAL_RANK", "0") == "0" and wandb.run is not None:
+            wandb.finish()

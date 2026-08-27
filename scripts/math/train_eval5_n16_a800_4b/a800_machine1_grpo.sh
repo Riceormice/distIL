@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec bash "${SCRIPT_DIR}/run_verl_method_a800_4b.sh" grpo
+REPO="${REPO:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
+exec env REPO="${REPO}" \
+  bash "${REPO}/scripts/math/grpo_opsd_trl_aligned/a800_grpo_4b.sh"
