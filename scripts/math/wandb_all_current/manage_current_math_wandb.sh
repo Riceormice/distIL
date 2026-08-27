@@ -65,6 +65,46 @@ is_running() {
   kill -0 "${pid}" 2>/dev/null
 }
 
+lock_holders() {
+  if command -v fuser >/dev/null 2>&1; then
+    fuser "${LOCK_FILE}" 2>/dev/null || true
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -t "${LOCK_FILE}" 2>/dev/null || true
+  fi
+}
+
+clear_stale_lock() {
+  flock -n "${LOCK_FILE}" -c true 2>/dev/null && return 0
+
+  local holders holder
+  holders="$(lock_holders)"
+  if [[ -z "${holders//[[:space:]]/}" ]]; then
+    echo "ERROR: upload lock is busy but its owner could not be identified: ${LOCK_FILE}" >&2
+    return 1
+  fi
+
+  echo "Stopping stale upload-lock holders: ${holders}"
+  for holder in ${holders}; do
+    [[ "${holder}" =~ ^[0-9]+$ ]] && kill -TERM "${holder}" 2>/dev/null || true
+  done
+  for _ in $(seq 1 30); do
+    flock -n "${LOCK_FILE}" -c true 2>/dev/null && return 0
+    sleep 1
+  done
+  echo "ERROR: stale upload lock was not released: ${LOCK_FILE}" >&2
+  return 1
+}
+
+terminate_watcher() {
+  local pid="$1" pgid
+  pgid="$(ps -o pgid= -p "${pid}" 2>/dev/null | tr -d '[:space:]')"
+  if [[ -n "${pgid}" && "${pgid}" == "${pid}" ]]; then
+    kill -TERM -- "-${pgid}" 2>/dev/null || true
+  else
+    kill -TERM "${pid}" 2>/dev/null || true
+  fi
+}
+
 show_progress() {
   local failures=0
   echo "===== MAIN + CURRENT GRPO/OPSD RUNS (13 runs) ====="
@@ -119,14 +159,14 @@ watch_forever() {
           WANDB_ENV_FILE="${WANDB_ENV_FILE}" \
           WANDB_ENTITY="${ENTITY}" \
           WANDB_PROJECT="${PROJECT}" \
-          bash "$0" once; then
+          bash "$0" once 9>&-; then
         echo "[$(date -Iseconds)] current Math upload cycle completed"
       else
         status=$?
         echo "[$(date -Iseconds)] current Math upload cycle failed: exit=${status}"
       fi
     } >>"${LOG_FILE}" 2>&1
-    sleep "${INTERVAL_SECONDS}" &
+    sleep "${INTERVAL_SECONDS}" 9>&- &
     wait $! || true
   done
 }
@@ -146,7 +186,8 @@ case "${1:-status}" in
       exit 0
     fi
     rm -f "${PID_FILE}"
-    nohup env \
+    clear_stale_lock || exit 1
+    nohup setsid env \
       STATE_ROOT="${STATE_ROOT}" \
       MAIN_STATE_ROOT="${MAIN_STATE_ROOT}" \
       SWEEP_OUTPUT_ROOT="${SWEEP_OUTPUT_ROOT}" \
@@ -158,7 +199,7 @@ case "${1:-status}" in
       WANDB_PROJECT="${PROJECT}" \
       UPLOAD_INTERVAL_SECONDS="${INTERVAL_SECONDS}" \
       UPLOAD_TIMEOUT_SECONDS="${TIMEOUT_SECONDS}" \
-      bash "$0" watch </dev/null >/dev/null 2>&1 &
+      bash "$0" watch </dev/null >>"${LOG_FILE}" 2>&1 &
     for _ in $(seq 1 20); do
       if is_running; then
         echo "Watcher started: pid=$(cat "${PID_FILE}")"
@@ -182,7 +223,7 @@ case "${1:-status}" in
       exit 0
     fi
     pid="$(cat "${PID_FILE}")"
-    kill "${pid}"
+    terminate_watcher "${pid}"
     for _ in $(seq 1 20); do
       if ! kill -0 "${pid}" 2>/dev/null; then
         echo "Watcher stopped."

@@ -60,6 +60,21 @@ class CurrentMathInventoryTest(unittest.TestCase):
             {item.method_label for item in specs},
         )
 
+    def test_new_inventory_contains_nine_follow_up_runs(self) -> None:
+        roots = [Path(f"/tmp/math-wandb-root-{index}") for index in range(7)]
+        main_specs = common.run_specs(*roots)
+        expected_profiles = {
+            "8b-grpo-nativefixed-h200-20260827",
+            "4b-grpo-nativefixed-a800-20260827",
+            "8b-opsd-grouped8x8-legacyallprompts-h200-20260825",
+            "4b-opsd-grouped8x8-a800-20260827",
+        }
+        new_main = [item for item in main_specs if item.profile in expected_profiles]
+
+        self.assertEqual(len(new_main), 4)
+        self.assertEqual(len(sweep.GRID), 5)
+        self.assertEqual(len(new_main) + len(sweep.GRID), 9)
+
     def test_legacy_sweep_does_not_overwrite_original(self) -> None:
         root = Path("/tmp/math-alpha-rho")
         original = sweep.SweepSpec(root, "0.9", "0.7")
