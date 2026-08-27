@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import ast
 import json
 import runpy
 import sys
@@ -112,6 +113,61 @@ def verify_launchers() -> None:
         if snippet in runner:
             raise AssertionError(f"aligned runner contains stale native invariant: {snippet}")
 
+    require(
+        "scripts/math/train_eval5_n16_h200/run_distil_method_h200.sh",
+        '--auto_resume true',
+        '--save_final_model false',
+        '[[ -s "${dir}/trainer_state.json" ]]',
+        'state.get("global_step", -1)',
+        "trap 'exit 143' TERM",
+    )
+    require(
+        "scripts/math/train_eval5_n16_a800_4b/run_opsd_a800_4b.sh",
+        '--auto_resume true',
+        '--save_final_model false',
+        '[[ -s "${dir}/trainer_state.json" ]]',
+        'state.get("global_step", -1)',
+        "trap 'exit 143' TERM",
+    )
+    require(
+        "scripts/math/grpo_opsd_trl_aligned/run_grpo_opsd_trl_aligned.sh",
+        '[[ -s "${dir}/trainer_state.json" ]]',
+        'state.get("global_step", -1)',
+        '--auto_resume true',
+        '--save_final_model false',
+    )
+
+    nightly = require(
+        "scripts/nightly/run_nightly_resumable.sh",
+        'NIGHTLY_WINDOW_SECONDS:-31800',
+        'NIGHTLY_KILL_GRACE_SECONDS:-600',
+        '--signal=TERM',
+        '--kill-after=',
+        'flock -n 9',
+    )
+    assert "NIGHTLY WINDOW CLOSED" in nightly
+    current = require(
+        "scripts/nightly/run_current_experiment.sh",
+        "math_alpha070_rho070",
+        "math_alpha090_rho090",
+        "math_grpo_4b",
+        "math_grpo_8b",
+        "math_opsd8x8_4b",
+        "math_opsd8x8_8b",
+        "physics_logits_sdpo_fkl",
+        "physics_logits_sdpo_jsd",
+    )
+    assert current.count("math_alpha") == 10
+    require(
+        "scripts/nightly/run_p0_sdpo_divergence.sh",
+        'P0_REQUIRED_COMMIT=',
+        'saved_frequency=',
+        'SAVE_FREQ="${SAVE_FREQ:-20}"',
+        'state/training.complete',
+        'state/run.complete',
+        'collect_free_generation.py',
+    )
+
 
 def load_grpo_module() -> dict:
     old_modules = dict(sys.modules)
@@ -217,6 +273,55 @@ def verify_trainer_helpers() -> None:
         assert payload["data"]["timing_s/step"] >= 0
 
 
+def load_opsd_checkpoint_helpers() -> dict:
+    source_path = REPO / "OPSD/opsd_train.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name in {"_checkpoint_is_complete", "_latest_checkpoint"}
+    }
+    if set(functions) != {"_checkpoint_is_complete", "_latest_checkpoint"}:
+        raise AssertionError("OPSD checkpoint helpers were not found")
+    module = ast.Module(body=list(functions.values()), type_ignores=[])
+    namespace = {"Path": Path, "re": __import__("re"), "_json": json}
+    exec(compile(module, str(source_path), "exec"), namespace)
+    return namespace
+
+
+def verify_opsd_resume_helpers() -> None:
+    module = load_opsd_checkpoint_helpers()
+    latest_checkpoint = module["_latest_checkpoint"]
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        for step in (5, 10):
+            checkpoint = root / f"checkpoint-{step}"
+            checkpoint.mkdir()
+            (checkpoint / "trainer_state.json").write_text(
+                json.dumps({"global_step": step}), encoding="utf-8"
+            )
+            (checkpoint / "adapter_model.safetensors").touch()
+            (checkpoint / f"global_step{step}").mkdir()
+
+        wrong_step = root / "checkpoint-15"
+        wrong_step.mkdir()
+        (wrong_step / "trainer_state.json").write_text(
+            json.dumps({"global_step": 14}), encoding="utf-8"
+        )
+        (wrong_step / "adapter_model.safetensors").touch()
+        (wrong_step / "global_step15").mkdir()
+
+        truncated = root / "checkpoint-20"
+        truncated.mkdir()
+        (truncated / "trainer_state.json").write_text("{", encoding="utf-8")
+        (truncated / "adapter_model.safetensors").touch()
+        (truncated / "global_step20").mkdir()
+
+        assert latest_checkpoint(str(root)) == str(root / "checkpoint-10")
+
+
 def verify_training_data() -> None:
     opsd_path = REPO / "OPSD/data/math/train.jsonl"
     sdpo_path = REPO / "SDPO/datasets/math_probs/train.json"
@@ -231,6 +336,7 @@ def verify_training_data() -> None:
 def main() -> None:
     verify_launchers()
     verify_trainer_helpers()
+    verify_opsd_resume_helpers()
     verify_training_data()
     print("Aligned OPSD/TRL GRPO protocol and resume invariants: PASS")
 

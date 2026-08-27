@@ -198,12 +198,42 @@ def _parse_checkpoint_steps(raw_steps: str) -> set[int]:
     return steps
 
 
+def _checkpoint_is_complete(checkpoint: Path, step: int) -> bool:
+    trainer_state = checkpoint / "trainer_state.json"
+    if not trainer_state.is_file():
+        return False
+    try:
+        state = _json.loads(trainer_state.read_text(encoding="utf-8"))
+        saved_step = int(state.get("global_step", -1))
+    except (OSError, TypeError, ValueError):
+        return False
+    if saved_step != step:
+        return False
+
+    model_saved = any(
+        (checkpoint / name).is_file()
+        for name in (
+            "adapter_model.safetensors",
+            "adapter_model.bin",
+            "model.safetensors",
+            "pytorch_model.bin",
+        )
+    )
+    optimizer_saved = (checkpoint / "optimizer.pt").is_file() or any(
+        checkpoint.glob("global_step*")
+    )
+    return model_saved and optimizer_saved
+
+
 def _latest_checkpoint(output_dir: str) -> str | None:
     checkpoints = []
     for checkpoint in Path(output_dir).glob("checkpoint-*"):
         match = re.fullmatch(r"checkpoint-(\d+)", checkpoint.name)
-        if match and any(checkpoint.glob("global_step*")):
-            checkpoints.append((int(match.group(1)), checkpoint))
+        if match is None:
+            continue
+        step = int(match.group(1))
+        if _checkpoint_is_complete(checkpoint, step):
+            checkpoints.append((step, checkpoint))
     return str(max(checkpoints)[1]) if checkpoints else None
 
 

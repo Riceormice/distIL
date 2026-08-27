@@ -117,6 +117,13 @@ flock -n 9 || { echo "ERROR: ${METHOD} pipeline is already running: ${RUN_ROOT}"
 LAUNCH_LOG="${LOG_ROOT}/pipeline_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "${LAUNCH_LOG}") 2>&1
 
+cleanup_pipeline() {
+  pkill -TERM -P "$$" >/dev/null 2>&1 || true
+}
+trap cleanup_pipeline EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 export SDPO_METRICS_JSONL="${METRICS_JSONL}"
 export SWANLAB_RUN_ID_FILE="${STATE_ROOT}/disabled_swanlab_run_id.txt"
 
@@ -231,8 +238,18 @@ checkpoint_dir() {
 checkpoint_ready() {
   local dir
   dir="$(checkpoint_dir "$1")"
-  [[ -s "${dir}/adapter_model.safetensors" || -s "${dir}/adapter_model.bin" ]] &&
-    compgen -G "${dir}/global_step*" >/dev/null
+  [[ -s "${dir}/trainer_state.json" ]] &&
+    [[ -s "${dir}/adapter_model.safetensors" || -s "${dir}/adapter_model.bin" ]] &&
+    compgen -G "${dir}/global_step*" >/dev/null &&
+    "${ENV_DIR}/bin/python" - "${dir}/trainer_state.json" "$1" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    state = json.load(stream)
+if int(state.get("global_step", -1)) != int(sys.argv[2]):
+    raise SystemExit(1)
+PY
 }
 
 result_complete() {

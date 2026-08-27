@@ -33,6 +33,13 @@ LAUNCH_LOG="${LOG_ROOT}/pipeline_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "${LAUNCH_LOG}") 2>&1
 export SDPO_METRICS_JSONL="${METRICS_JSONL}"
 
+cleanup_pipeline() {
+  pkill -TERM -P "$$" >/dev/null 2>&1 || true
+}
+trap cleanup_pipeline EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 cat >"${STATE_ROOT}/parameters.env" <<EOF
 method=opsd
 framework=distIL-TRL
@@ -66,8 +73,18 @@ checkpoint_dir() {
 checkpoint_ready() {
   local dir
   dir="$(checkpoint_dir "$1")"
-  [[ -s "${dir}/adapter_model.safetensors" || -s "${dir}/adapter_model.bin" ]] &&
-    compgen -G "${dir}/global_step*" >/dev/null
+  [[ -s "${dir}/trainer_state.json" ]] &&
+    [[ -s "${dir}/adapter_model.safetensors" || -s "${dir}/adapter_model.bin" ]] &&
+    compgen -G "${dir}/global_step*" >/dev/null &&
+    "${ENV_DIR}/bin/python" - "${dir}/trainer_state.json" "$1" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    state = json.load(stream)
+if int(state.get("global_step", -1)) != int(sys.argv[2]):
+    raise SystemExit(1)
+PY
 }
 
 result_complete() {
@@ -120,6 +137,8 @@ launch_phase() {
     --save_steps 100
     --selected_checkpoint_steps "${SAVE_STEPS}"
     --stop_after_step "${stop_after_step}"
+    --auto_resume true
+    --save_final_model false
     --logging_steps 1
     --eval_strategy no
     --max_completion_length "${MAX_COMPLETION_LENGTH}"

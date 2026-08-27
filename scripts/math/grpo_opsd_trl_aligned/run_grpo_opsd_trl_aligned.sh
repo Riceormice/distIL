@@ -301,7 +301,16 @@ checkpoint_ready() {
   dir="$(checkpoint_dir "$1")"
   [[ -s "${dir}/trainer_state.json" ]] &&
     [[ -s "${dir}/adapter_model.safetensors" || -s "${dir}/adapter_model.bin" ]] &&
-    compgen -G "${dir}/global_step*" >/dev/null
+    compgen -G "${dir}/global_step*" >/dev/null &&
+    "${ENV_DIR}/bin/python" - "${dir}/trainer_state.json" "$1" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    state = json.load(stream)
+if int(state.get("global_step", -1)) != int(sys.argv[2]):
+    raise SystemExit(1)
+PY
 }
 
 result_complete() {
