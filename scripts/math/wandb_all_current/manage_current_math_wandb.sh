@@ -12,14 +12,20 @@ STATE_ROOT="${STATE_ROOT:-/media/vlm-ckp-fileset/ylong/sdpo_math_test_current_up
 MAIN_STATE_ROOT="${MAIN_STATE_ROOT:-${STATE_ROOT}/main_8runs}"
 SWEEP_OUTPUT_ROOT="${SWEEP_OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/sr_opsd_math_alpha_rho_sweep_20260819}"
 SWEEP_STATE_ROOT="${SWEEP_STATE_ROOT:-${SWEEP_OUTPUT_ROOT}/wandb_upload_state_sdpo_math_test}"
+LEGACY_SWEEP_OUTPUT_ROOT="${LEGACY_SWEEP_OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/sr_opsd_math_alpha_rho_sweep_legacy_allprompts_20260825}"
+LEGACY_SWEEP_STATE_ROOT="${LEGACY_SWEEP_STATE_ROOT:-${STATE_ROOT}/alpha_rho_legacy_allprompts}"
 WANDB_ENV_FILE="${WANDB_ENV_FILE:-/root/.config/wandb/upload.env}"
 PID_FILE="${STATE_ROOT}/periodic_upload.pid"
 LOCK_FILE="${STATE_ROOT}/periodic_upload.lock"
 LOG_FILE="${STATE_ROOT}/periodic_upload.log"
 INTERVAL_SECONDS="${UPLOAD_INTERVAL_SECONDS:-600}"
-TIMEOUT_SECONDS="${UPLOAD_TIMEOUT_SECONDS:-1800}"
+TIMEOUT_SECONDS="${UPLOAD_TIMEOUT_SECONDS:-3600}"
 
-mkdir -p "${STATE_ROOT}" "${MAIN_STATE_ROOT}" "${SWEEP_STATE_ROOT}"
+mkdir -p \
+  "${STATE_ROOT}" \
+  "${MAIN_STATE_ROOT}" \
+  "${SWEEP_STATE_ROOT}" \
+  "${LEGACY_SWEEP_STATE_ROOT}"
 
 run_main() {
   env \
@@ -39,6 +45,19 @@ run_sweep() {
     bash "${SWEEP_UPLOADER}" --state-dir "${SWEEP_STATE_ROOT}" "$@"
 }
 
+run_legacy_sweep() {
+  env \
+    OUTPUT_ROOT="${LEGACY_SWEEP_OUTPUT_ROOT}" \
+    WANDB_ENV_FILE="${WANDB_ENV_FILE}" \
+    WANDB_ENTITY="${ENTITY}" \
+    WANDB_PROJECT="${PROJECT}" \
+    bash "${SWEEP_UPLOADER}" \
+      --state-dir "${LEGACY_SWEEP_STATE_ROOT}" \
+      --variant legacy_allprompts \
+      --display-suffix LegacyAllPrompts \
+      "$@"
+}
+
 is_running() {
   [[ -s "${PID_FILE}" ]] || return 1
   local pid
@@ -48,25 +67,31 @@ is_running() {
 
 show_progress() {
   local failures=0
-  echo "===== MAIN TABLE (8 runs) + OPSD GROUPED 8x8 (1 run) ====="
+  echo "===== MAIN + CURRENT GRPO/OPSD RUNS (13 runs) ====="
   run_main dry-run || failures=$((failures + 1))
   echo
   echo "===== 8B SR-OPSD ALPHA/RHO SWEEP (5 runs) ====="
   run_sweep --dry-run || failures=$((failures + 1))
   echo
-  echo "managed_runs=14 destination=https://wandb.ai/${ENTITY}/${PROJECT} failures=${failures}"
+  echo "===== LEGACY ALL-PROMPTS ALPHA/RHO SWEEP (5 runs) ====="
+  run_legacy_sweep --dry-run || failures=$((failures + 1))
+  echo
+  echo "managed_runs=23 destination=https://wandb.ai/${ENTITY}/${PROJECT} failures=${failures}"
   (( failures == 0 ))
 }
 
 upload_once() {
   local failures=0
-  echo "===== UPLOAD MAIN 8 RUNS + OPSD GROUPED 8x8 ====="
+  echo "===== UPLOAD MAIN + CURRENT GRPO/OPSD RUNS ====="
   run_main once || failures=$((failures + 1))
   echo
   echo "===== UPLOAD ALPHA/RHO 5 RUNS ====="
   run_sweep || failures=$((failures + 1))
   echo
-  echo "upload_groups=2 managed_runs=14 failures=${failures}"
+  echo "===== UPLOAD LEGACY ALL-PROMPTS ALPHA/RHO RUNS ====="
+  run_legacy_sweep || failures=$((failures + 1))
+  echo
+  echo "upload_groups=3 managed_runs=23 failures=${failures}"
   (( failures == 0 ))
 }
 
@@ -89,6 +114,8 @@ watch_forever() {
           MAIN_STATE_ROOT="${MAIN_STATE_ROOT}" \
           SWEEP_OUTPUT_ROOT="${SWEEP_OUTPUT_ROOT}" \
           SWEEP_STATE_ROOT="${SWEEP_STATE_ROOT}" \
+          LEGACY_SWEEP_OUTPUT_ROOT="${LEGACY_SWEEP_OUTPUT_ROOT}" \
+          LEGACY_SWEEP_STATE_ROOT="${LEGACY_SWEEP_STATE_ROOT}" \
           WANDB_ENV_FILE="${WANDB_ENV_FILE}" \
           WANDB_ENTITY="${ENTITY}" \
           WANDB_PROJECT="${PROJECT}" \
@@ -124,6 +151,8 @@ case "${1:-status}" in
       MAIN_STATE_ROOT="${MAIN_STATE_ROOT}" \
       SWEEP_OUTPUT_ROOT="${SWEEP_OUTPUT_ROOT}" \
       SWEEP_STATE_ROOT="${SWEEP_STATE_ROOT}" \
+      LEGACY_SWEEP_OUTPUT_ROOT="${LEGACY_SWEEP_OUTPUT_ROOT}" \
+      LEGACY_SWEEP_STATE_ROOT="${LEGACY_SWEEP_STATE_ROOT}" \
       WANDB_ENV_FILE="${WANDB_ENV_FILE}" \
       WANDB_ENTITY="${ENTITY}" \
       WANDB_PROJECT="${PROJECT}" \
@@ -179,9 +208,10 @@ case "${1:-status}" in
     tail -n 100 "${LOG_FILE}" 2>/dev/null || true
     ;;
   doctor)
-    echo "managed_runs=14"
+    echo "managed_runs=23"
     echo "main_state=${MAIN_STATE_ROOT}"
     echo "sweep_state=${SWEEP_STATE_ROOT}"
+    echo "legacy_sweep_state=${LEGACY_SWEEP_STATE_ROOT}"
     echo "destination=https://wandb.ai/${ENTITY}/${PROJECT}"
     run_main doctor
     ;;

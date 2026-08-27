@@ -49,8 +49,7 @@ if key.startswith("wandb_v1_") and installed < (0, 22):
 PY
 
 if [[ ! -d "${OUTPUT_ROOT}/sr_opsd" ]]; then
-  echo "ERROR: alpha/rho sweep root is missing: ${OUTPUT_ROOT}/sr_opsd" >&2
-  exit 4
+  echo "WAITING: alpha/rho sweep root is missing: ${OUTPUT_ROOT}/sr_opsd"
 fi
 
 export WANDB_MODE=online

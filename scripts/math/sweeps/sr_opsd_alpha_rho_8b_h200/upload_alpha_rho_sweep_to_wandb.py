@@ -38,6 +38,8 @@ class SweepSpec:
     output_root: Path
     alpha: str
     rho: str
+    variant: str = "original"
+    display_suffix: str = ""
 
     @property
     def method_dir(self) -> str:
@@ -58,14 +60,16 @@ class SweepSpec:
 
     @property
     def profile(self) -> str:
-        return f"8b-sr-opsd-alpha{self.alpha}-rho{self.rho}-h200"
+        base = f"8b-sr-opsd-alpha{self.alpha}-rho{self.rho}-h200"
+        return base if self.variant == "original" else f"{base}-{self.variant}"
 
     @property
     def display_name(self) -> str:
-        return (
+        base = (
             "Qwen3-8B-Math-SR-OPSD-"
             f"alpha{self.alpha}-rho{self.rho}-seed0-eval5-N16-H200"
         )
+        return base if not self.display_suffix else f"{base}-{self.display_suffix}"
 
 
 def parse_args() -> argparse.Namespace:
@@ -76,6 +80,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--project", default="SDPO_math_test")
     parser.add_argument("--state-dir", type=Path)
+    parser.add_argument(
+        "--variant",
+        default="original",
+        help="Stable run-ID namespace for a distinct evaluation protocol.",
+    )
+    parser.add_argument(
+        "--display-suffix",
+        default="",
+        help="Suffix appended to W&B names for a distinct protocol.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--skip-strict-validation",
@@ -86,7 +100,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def run_id_for(spec: SweepSpec) -> str:
-    payload = f"{RUN_NAMESPACE}:{spec.profile}"
+    if spec.variant == "original":
+        payload = f"{RUN_NAMESPACE}:{spec.profile}"
+    else:
+        payload = f"{RUN_NAMESPACE}:{spec.variant}:{spec.profile}"
     return "ar" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:14]
 
 
@@ -110,6 +127,7 @@ def config_for(
         "evaluation_datasets": list(common.DATASETS),
         "source": "local_file_and_evaluation_json",
         "source_root": str(spec.run_root),
+        "evaluation_variant": spec.variant,
     }
     config.update(parameters)
     return config
@@ -247,26 +265,31 @@ def upload_spec(
     import wandb
 
     parameters = common.parse_parameters(run_root / "state/parameters.env")
+    group = "Qwen3-8B-Math-SR-OPSD-alpha-rho-N16-seed0"
+    tags = [
+        "math",
+        "alpha-rho-sweep",
+        "SR-OPSD",
+        "Qwen3-8B",
+        "H200",
+        "eval5",
+        "N16",
+        "seed0",
+        f"alpha-{spec.alpha}",
+        f"rho-{spec.rho}",
+    ]
+    if spec.variant != "original":
+        group = f"{group}-{spec.variant}"
+        tags.extend(["evaluation-variant", spec.variant])
     run = wandb.init(
         entity=entity,
         project=project,
         id=run_id,
         name=spec.display_name,
         resume="allow",
-        group="Qwen3-8B-Math-SR-OPSD-alpha-rho-N16-seed0",
+        group=group,
         job_type="hyperparameter-sweep",
-        tags=[
-            "math",
-            "alpha-rho-sweep",
-            "SR-OPSD",
-            "Qwen3-8B",
-            "H200",
-            "eval5",
-            "N16",
-            "seed0",
-            f"alpha-{spec.alpha}",
-            f"rho-{spec.rho}",
-        ],
+        tags=tags,
         config=config_for(spec, parameters),
         settings=wandb.Settings(init_timeout=180),
     )
@@ -334,7 +357,13 @@ def main() -> None:
     failures = 0
     selected = 0
     for alpha, rho in GRID:
-        spec = SweepSpec(args.output_root, alpha, rho)
+        spec = SweepSpec(
+            args.output_root,
+            alpha,
+            rho,
+            variant=args.variant,
+            display_suffix=args.display_suffix,
+        )
         try:
             pending, _ = upload_spec(
                 spec,

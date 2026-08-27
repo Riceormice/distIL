@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Incrementally upload the main Math runs and grouped 8x8 OPSD to W&B."""
+"""Incrementally upload the main and current follow-up Math runs to W&B."""
 
 from __future__ import annotations
 
@@ -81,6 +81,38 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--grouped-opsd-legacy-root",
+        type=Path,
+        default=Path(
+            "/media/vlm-ckp-fileset/ylong/"
+            "math_opsd_grouped8x8_eval5_n16_h200_legacy_allprompts_20260825"
+        ),
+    )
+    parser.add_argument(
+        "--grouped-opsd-4b-root",
+        type=Path,
+        default=Path(
+            "/media/vlm-ckp-fileset/ylong/"
+            "math_4b_opsd_grouped8x8_eval5_n16_a800_20260827"
+        ),
+    )
+    parser.add_argument(
+        "--grpo-8b-current-root",
+        type=Path,
+        default=Path(
+            "/media/vlm-ckp-fileset/ylong/"
+            "math_grpo_8b_native_verl_eval5_n16_h200_20260827"
+        ),
+    )
+    parser.add_argument(
+        "--grpo-4b-current-root",
+        type=Path,
+        default=Path(
+            "/media/vlm-ckp-fileset/ylong/"
+            "math_grpo_4b_native_verl_eval5_n16_a800_20260827"
+        ),
+    )
+    parser.add_argument(
         "--state-dir",
         type=Path,
         default=Path(
@@ -105,6 +137,10 @@ def run_specs(
     h200_root: Path,
     a800_root: Path,
     grouped_opsd_root: Path,
+    grouped_opsd_legacy_root: Path,
+    grouped_opsd_4b_root: Path,
+    grpo_8b_current_root: Path,
+    grpo_4b_current_root: Path,
 ) -> tuple[RunSpec, ...]:
     def names(model: str, hardware: str) -> tuple[tuple[str, str, str], ...]:
         return (
@@ -139,13 +175,15 @@ def run_specs(
             ),
         )
 
+    names_8b = names("8b", "h200")
+    names_4b = names("4b", "a800")
     specs = [
         RunSpec("8B", "H200", method_dir, label, run_name, h200_root)
-        for method_dir, label, run_name in names("8b", "h200")
+        for method_dir, label, run_name in names_8b
     ]
     specs.extend(
         RunSpec("4B", "A800", method_dir, label, run_name, a800_root)
-        for method_dir, label, run_name in names("4b", "a800")
+        for method_dir, label, run_name in names_4b
     )
     specs.append(
         RunSpec(
@@ -157,6 +195,51 @@ def run_specs(
             "beta0-clip0.06-topk100-temp0.7-tok16384-eval5-n16-h200",
             grouped_opsd_root,
             "8b-opsd-grouped8x8-h200",
+        )
+    )
+    grpo_8b_name = next(row[2] for row in names_8b if row[0] == "grpo")
+    grpo_4b_name = next(row[2] for row in names_4b if row[0] == "grpo")
+    specs.extend(
+        (
+            RunSpec(
+                "8B",
+                "H200",
+                "grpo",
+                "GRPO-NativeFixed",
+                grpo_8b_name,
+                grpo_8b_current_root,
+                "8b-grpo-nativefixed-h200-20260827",
+            ),
+            RunSpec(
+                "4B",
+                "A800",
+                "grpo",
+                "GRPO-NativeFixed",
+                grpo_4b_name,
+                grpo_4b_current_root,
+                "4b-grpo-nativefixed-a800-20260827",
+            ),
+            RunSpec(
+                "8B",
+                "H200",
+                "opsd",
+                "OPSD-Grouped8x8-LegacyAllPrompts",
+                "opsd-8b-seed0-grouped-q8-r8-lr5e-6-steps100-sched420-"
+                "beta0-clip0.06-topk100-temp0.7-tok16384-eval5-n16-h200-"
+                "legacyallprompts",
+                grouped_opsd_legacy_root,
+                "8b-opsd-grouped8x8-legacyallprompts-h200-20260825",
+            ),
+            RunSpec(
+                "4B",
+                "A800",
+                "opsd",
+                "OPSD-Grouped8x8",
+                "opsd-4b-seed0-grouped-q8-r8-lr5e-6-steps100-sched420-"
+                "beta0-clip0.05-topk100-temp0.7-tok16384-eval5-n16-a800",
+                grouped_opsd_4b_root,
+                "4b-opsd-grouped8x8-a800-20260827",
+            ),
         )
     )
     return tuple(specs)
@@ -654,6 +737,10 @@ def main() -> None:
         args.h200_root,
         args.a800_root,
         args.grouped_opsd_root,
+        args.grouped_opsd_legacy_root,
+        args.grouped_opsd_4b_root,
+        args.grpo_8b_current_root,
+        args.grpo_4b_current_root,
     )
     for spec in specs:
         try:
