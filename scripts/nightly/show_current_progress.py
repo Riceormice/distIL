@@ -41,35 +41,35 @@ def jobs() -> list[Job]:
     specs = [
         Job(
             "math_alpha070_rho070",
-            "Math a=.7 r=.7",
+            "Math 8B a=.7 r=.7",
             sweep,
             "*rho0.7-refw0.7-*",
             100,
         ),
         Job(
             "math_alpha070_rho090",
-            "Math a=.7 r=.9",
+            "Math 8B a=.7 r=.9",
             sweep,
             "*rho0.9-refw0.7-*",
             100,
         ),
         Job(
             "math_alpha070_rho095",
-            "Math a=.7 r=.95",
+            "Math 8B a=.7 r=.95",
             sweep,
             "*rho0.95-refw0.7-*",
             100,
         ),
         Job(
             "math_alpha090_rho070",
-            "Math a=.9 r=.7",
+            "Math 8B a=.9 r=.7",
             sweep,
             "*rho0.7-refw0.9-*",
             100,
         ),
         Job(
             "math_alpha090_rho090",
-            "Math a=.9 r=.9",
+            "Math 8B a=.9 r=.9",
             sweep,
             "*rho0.9-refw0.9-*",
             100,
@@ -103,6 +103,46 @@ def jobs() -> list[Job]:
             100,
         ),
     ]
+    sweep_4b = BASE / "sr_opsd_math_4b_alpha_rho_sweep_eval5_n16_a800_20260829/sr_opsd"
+    specs.extend(
+        [
+            Job(
+                "math_4b_alpha070_rho070",
+                "Math 4B a=.7 r=.7",
+                sweep_4b,
+                "*rho0.7-refw0.7-*",
+                100,
+            ),
+            Job(
+                "math_4b_alpha070_rho090",
+                "Math 4B a=.7 r=.9",
+                sweep_4b,
+                "*rho0.9-refw0.7-*",
+                100,
+            ),
+            Job(
+                "math_4b_alpha070_rho095",
+                "Math 4B a=.7 r=.95",
+                sweep_4b,
+                "*rho0.95-refw0.7-*",
+                100,
+            ),
+            Job(
+                "math_4b_alpha090_rho070",
+                "Math 4B a=.9 r=.7",
+                sweep_4b,
+                "*rho0.7-refw0.9-*",
+                100,
+            ),
+            Job(
+                "math_4b_alpha090_rho090",
+                "Math 4B a=.9 r=.9",
+                sweep_4b,
+                "*rho0.9-refw0.9-*",
+                100,
+            ),
+        ]
+    )
     p0 = BASE / "physics_p0_sdpo_fkl_jsd_20260827/Qwen3-8B"
     specs.extend(
         [

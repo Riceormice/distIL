@@ -11,6 +11,11 @@ math_alpha070_rho090
 math_alpha070_rho095
 math_alpha090_rho070
 math_alpha090_rho090
+math_4b_alpha070_rho070
+math_4b_alpha070_rho090
+math_4b_alpha070_rho095
+math_4b_alpha090_rho070
+math_4b_alpha090_rho090
 math_grpo_4b
 math_grpo_8b
 math_opsd8x8_4b
@@ -37,6 +42,16 @@ case "${JOB}" in
     COMMAND=(bash "${REPO}/scripts/math/legacy_all_prompts_h200/h200_alpha090_rho070.sh") ;;
   math_alpha090_rho090)
     COMMAND=(bash "${REPO}/scripts/math/legacy_all_prompts_h200/h200_alpha090_rho090.sh") ;;
+  math_4b_alpha070_rho070)
+    COMMAND=(bash "${REPO}/scripts/math/sweeps/sr_opsd_alpha_rho_4b_a800/a800_alpha070_rho070.sh") ;;
+  math_4b_alpha070_rho090)
+    COMMAND=(bash "${REPO}/scripts/math/sweeps/sr_opsd_alpha_rho_4b_a800/a800_alpha070_rho090.sh") ;;
+  math_4b_alpha070_rho095)
+    COMMAND=(bash "${REPO}/scripts/math/sweeps/sr_opsd_alpha_rho_4b_a800/a800_alpha070_rho095.sh") ;;
+  math_4b_alpha090_rho070)
+    COMMAND=(bash "${REPO}/scripts/math/sweeps/sr_opsd_alpha_rho_4b_a800/a800_alpha090_rho070.sh") ;;
+  math_4b_alpha090_rho090)
+    COMMAND=(bash "${REPO}/scripts/math/sweeps/sr_opsd_alpha_rho_4b_a800/a800_alpha090_rho090.sh") ;;
   math_grpo_4b)
     COMMAND=(bash "${REPO}/scripts/math/grpo_opsd_trl_aligned/a800_grpo_4b.sh") ;;
   math_grpo_8b)
