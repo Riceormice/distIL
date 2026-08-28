@@ -12,6 +12,12 @@ List supported jobs:
 bash scripts/nightly/run_current_experiment.sh --list
 ```
 
+Show progress for all current jobs:
+
+```bash
+python3 scripts/nightly/show_current_progress.py
+```
+
 Run one job:
 
 ```bash
