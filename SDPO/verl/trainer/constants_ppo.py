@@ -51,4 +51,7 @@ def get_ppo_ray_runtime_env():
     for key in list(runtime_env["env_vars"].keys()):
         if os.environ.get(key) is not None:
             runtime_env["env_vars"].pop(key, None)
+    for key in ("SDPO_SHARED_CHECKPOINT_STORE", "SDPO_ALLOW_LEGACY_TEACHER_RESET"):
+        if key in os.environ:
+            runtime_env["env_vars"][key] = os.environ[key]
     return runtime_env

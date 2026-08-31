@@ -154,6 +154,8 @@ def inventory(root: Path, target: Path, *, weights: bool) -> dict:
 
 
 def ensure_current_resume(root: Path, candidate: Candidate) -> dict:
+    from compact_current_checkpoints import codec as checkpoint_codec
+
     if not candidate.current_run:
         return {}
     run = safe_path(root, root / candidate.current_run)
@@ -170,6 +172,9 @@ def ensure_current_resume(root: Path, candidate: Candidate) -> dict:
         safe_path(root, path)
         if not path.is_file() or path.stat().st_size == 0:
             raise UnsafeCleanup(f"current resume structure is incomplete: {path}")
+        if path.name.startswith("model_world_size_") and checkpoint_codec.is_shared(path):
+            with checkpoint_codec.SharedReader(path):
+                pass
     return {"checkpoint": str(checkpoint), "required_files": len(required),
             "note": "structural check only; tensor restore not tested; trajectories are different"}
 

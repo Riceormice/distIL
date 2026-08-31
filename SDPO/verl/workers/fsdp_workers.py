@@ -950,7 +950,8 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
             if (
                 checkpoint_sd_cfg is not None
                 and self.config.actor.policy_loss.get("loss_mode", "vanilla") == "sdpo"
-                and checkpoint_sd_cfg.get("renyi_regularization", False)
+                and self.actor.teacher_module is not None
+                and self.actor.teacher_module is not self.actor.actor_module
                 and checkpoint_sd_cfg.get("teacher_regularization", "ema") == "ema"
                 and checkpoint_sd_cfg.get("save_teacher_checkpoint", True)
             ):
@@ -1257,14 +1258,19 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         if hasattr(self, "teacher_checkpoint_manager"):
             teacher_path = os.path.join(local_path, "ema_teacher")
             if not os.path.isdir(teacher_path):
-                raise FileNotFoundError(
-                    f"SR-OPSD resume requires the EMA teacher checkpoint at {teacher_path}"
+                if os.environ.get("SDPO_ALLOW_LEGACY_TEACHER_RESET") != "1":
+                    raise FileNotFoundError(
+                        f"Exact EMA resume requires {teacher_path}. A legacy checkpoint without teacher "
+                        "cannot provide exact resume; SDPO_ALLOW_LEGACY_TEACHER_RESET=1 explicitly "
+                        "accepts the previous approximate reset behavior."
+                    )
+                print("WARNING: LEGACY_EMA_TEACHER_RESET: resume is not state-equivalent", flush=True)
+            else:
+                self.teacher_checkpoint_manager.load_checkpoint(
+                    local_path=teacher_path,
+                    hdfs_path=None,
+                    del_local_after_load=del_local_after_load,
                 )
-            self.teacher_checkpoint_manager.load_checkpoint(
-                local_path=teacher_path,
-                hdfs_path=None,
-                del_local_after_load=del_local_after_load,
-            )
 
         if self._is_offload_param:
             offload_fsdp_model_to_cpu(self.actor_module_fsdp)

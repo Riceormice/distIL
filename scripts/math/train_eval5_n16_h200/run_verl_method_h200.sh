@@ -13,6 +13,9 @@ UNIFIED_ENV_ACTIVATE="${REPO}/scripts/math/unified_env/activate_unified_math_env
 source "${UNIFIED_ENV_ACTIVATE}" verl
 source "${REPO}/scripts/math/lock_protocol.sh"
 PYTHON_BIN="${ENV_DIR}/bin/python"
+export SDPO_SHARED_CHECKPOINT_STORE="${SDPO_SHARED_CHECKPOINT_STORE-/media/vlm-ckp-fileset/ylong/sdpo/shared_checkpoint_bases/v1}"
+CHECKPOINT_STORAGE_MODE=plain
+[[ -z "${SDPO_SHARED_CHECKPOINT_STORE}" ]] || CHECKPOINT_STORAGE_MODE=lossless_shared_v1
 MODEL_SIZE="${MODEL_SIZE:-8b}"
 HARDWARE="${HARDWARE:-h200}"
 case "${MODEL_SIZE}" in
@@ -244,6 +247,8 @@ cat >"${STATE_ROOT}/parameters.env" <<EOF
 method=${METHOD}
 framework=SDPO-native-VERL
 code_commit=${CODE_COMMIT}
+checkpoint_storage=${CHECKPOINT_STORAGE_MODE}
+shared_checkpoint_store=${SDPO_SHARED_CHECKPOINT_STORE}
 protocol_sha256=${PROTOCOL_SHA256}
 model_size=${MODEL_SIZE}
 hardware=${HARDWARE}

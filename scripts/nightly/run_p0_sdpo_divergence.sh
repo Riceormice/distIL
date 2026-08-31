@@ -9,19 +9,24 @@ case "${METHOD}" in
 esac
 
 P0_REPO="${P0_REPO:-/media/damoxing/che-liu-fileset/ylong/sdpo/code/SDPO-p0-mechanism}"
-P0_REQUIRED_COMMIT="${P0_REQUIRED_COMMIT:-64cabf6e9bea1fec762b04e490169150bc0f6f63}"
+P0_REQUIRED_COMMIT="${P0_REQUIRED_COMMIT:-535e9814e8c6ce381c72ba0225c29869d93b8e84}"
 OUT_ROOT="${P0_OUT_ROOT:-/media/vlm-ckp-fileset/ylong/physics_p0_sdpo_fkl_jsd_20260827}"
 MODEL_PATH="${MODEL_PATH:-/media/vlm-ckp-fileset/ylong/sdpo/models/Qwen3-8B}"
 METHOD_DIR="${OUT_ROOT}/Qwen3-8B/${METHOD}/seed0"
 LAUNCH_CONFIG="${METHOD_DIR}/launch_config.json"
 MACHINE_SCRIPT="${P0_REPO}/scripts/physics_mechanism/cluster/sdpo_divergence/machine${MACHINE_ID}_${METHOD}.sh"
 
+if [[ -f "${METHOD_DIR}/state/run.complete" ]]; then
+  echo "SKIP: ${METHOD} logits experiment is already complete"
+  exit 0
+fi
+
 [[ -x "${MACHINE_SCRIPT}" ]] || {
   echo "ERROR: missing P0 launcher: ${MACHINE_SCRIPT}" >&2
   exit 2
 }
 [[ "$(git -C "${P0_REPO}" rev-parse HEAD 2>/dev/null)" == "${P0_REQUIRED_COMMIT}" ]] || {
-  echo "ERROR: P0 repo must be at tested commit ${P0_REQUIRED_COMMIT}" >&2
+  echo "ERROR: P0 repo must be at pinned commit ${P0_REQUIRED_COMMIT}" >&2
   echo "current=$(git -C "${P0_REPO}" rev-parse HEAD 2>/dev/null || echo unavailable)" >&2
   exit 2
 }
@@ -41,11 +46,6 @@ collect_method() {
     --tokenizer "${MODEL_PATH}"
   [[ -f "${METHOD_DIR}/state/run.complete" ]]
 }
-
-if [[ -f "${METHOD_DIR}/state/run.complete" ]]; then
-  echo "SKIP: ${METHOD} logits experiment is already complete"
-  exit 0
-fi
 
 if [[ -f "${METHOD_DIR}/state/training.complete" ]]; then
   echo "Training is complete; reconciling capture/generation markers for ${METHOD}"

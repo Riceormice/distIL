@@ -28,6 +28,7 @@ except ImportError:
     from torch.distributed._tensor import DTensor
 
 from tqdm import tqdm
+from verl.utils.checkpoint.shared_model import load_model
 
 from .base_model_merger import BaseModelMerger
 
@@ -87,7 +88,7 @@ class FSDPModelMerger(BaseModelMerger):
         return world_size
 
     def _load_rank_zero_state_dict(self, world_size: int) -> dict:
-        return torch.load(
+        return load_model(
             Path(self.config.local_dir) / f"model_world_size_{world_size}_rank_0.pt",
             map_location="cpu",
             weights_only=False,
@@ -147,7 +148,7 @@ class FSDPModelMerger(BaseModelMerger):
 
         def process_one_shard(rank: int, model_state_dict_lst: list):
             model_path = Path(self.config.local_dir) / f"model_world_size_{world_size}_rank_{rank}.pt"
-            state_dict = torch.load(model_path, map_location="cpu", weights_only=False)
+            state_dict = load_model(model_path, map_location="cpu", weights_only=False)
             model_state_dict_lst[rank] = state_dict
             return state_dict
 

@@ -26,6 +26,7 @@ import audit_opsd_checkpoint_retention as audit
 import cleanup_reviewed_math_weights as guarded
 from cleanup_verified_physics_weights import UnsafeCleanup, journal
 import compact_math_evaluations as math_json
+from compact_current_checkpoints import codec as checkpoint_codec
 
 
 BASE = audit.scheduled.BASE
@@ -57,7 +58,13 @@ def file_stamp(info) -> list:
 
 def nonempty(root: Path, path: Path) -> bool:
     guarded.safe_path(root, path)
-    return path.is_file() and path.stat().st_size > 0
+    if not path.is_file() or path.stat().st_size <= 0:
+        return False
+    if path.name.startswith("model_world_size_") and checkpoint_codec.is_shared(path):
+        # Structural readiness includes the external baseline dependency.
+        with checkpoint_codec.SharedReader(path):
+            pass
+    return True
 
 
 def native_ready(root: Path, checkpoint: Path, *, resume=True) -> bool:

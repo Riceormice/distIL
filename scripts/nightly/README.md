@@ -35,6 +35,15 @@ bash scripts/nightly/run_current_experiment.sh math_grpo_8b
 The P0 SDPO FKL/JSD wrapper preserves `save_freq` from an existing
 `launch_config.json`. A new run defaults to a checkpoint every 20 steps. This
 changes checkpoint I/O only; it does not change the training or evaluation
-protocol. The wrapper also pins the P0 repository to the commit that passed the
-two-step smoke test; set `P0_REQUIRED_COMMIT` only when intentionally starting a
-separately validated code version.
+protocol. The wrapper also pins the P0 repository revision; set
+`P0_REQUIRED_COMMIT` only when intentionally using a separately validated code
+version. Completed runs are skipped before checking this pin. New Physics runs
+need a matching fixed probe and the two-step capture/resume acceptance test.
+
+Current native Math runs use lossless shared checkpoint storage. Existing
+OPSD/TRL adapter checkpoints keep their existing save format. Training, evaluation,
+job IDs and the nightly timeout are unchanged. See
+[shared checkpoint migration](../maintenance/SHARED_CHECKPOINTS.md) for both
+repository updates, the eight-GPU test, conversion and rollback commands. Local
+CPU tests are not a substitute for cluster GPU acceptance. Do not delete the
+shared baseline directory or use old checkpoint readers after conversion.

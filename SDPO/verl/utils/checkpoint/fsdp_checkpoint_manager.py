@@ -34,6 +34,7 @@ from verl.utils.fsdp_utils import fsdp_version, get_fsdp_full_state_dict, get_fs
 from verl.utils.logger import log_with_rank
 
 from .checkpoint_manager import BaseCheckpointManager
+from .shared_model import compact_saved_model, load_model
 
 # Setup logging
 logger = logging.getLogger(__file__)
@@ -134,7 +135,7 @@ class FSDPCheckpointManager(BaseCheckpointManager):
             if self.should_load_model:
                 remote_model_path = os.path.join(local_path, f"model_world_size_{self.world_size}_rank_{self.rank}.pt")
                 local_model_path = copy_to_local(remote_model_path)
-                model_state_dict = torch.load(local_model_path, weights_only=False)
+                model_state_dict = load_model(local_model_path, weights_only=False)
                 self.model.load_state_dict(model_state_dict)
                 log_with_rank(f"Loaded model from {remote_model_path}", rank=self.rank, logger=logger)
 
@@ -228,6 +229,7 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                 if self.should_save_model:
                     model_state_dict = self.model.state_dict()
                     torch.save(model_state_dict, model_path)
+                    compact_saved_model(model_path, self.model.config.to_dict(), self.world_size, self.rank)
                     log_with_rank(f"Saved model to {os.path.abspath(model_path)}", rank=self.rank, logger=logger)
 
                 if self.should_save_optimizer:
