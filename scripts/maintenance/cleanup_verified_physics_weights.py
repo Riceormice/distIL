@@ -10,17 +10,20 @@ their absence is not a global process-liveness check.
 from __future__ import annotations
 
 import argparse
+import ast
 import fcntl
 import hashlib
 import json
 import os
 import shutil
 import stat
+import struct
 import subprocess
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 import time
+import zipfile
 
 
 ALLOWED_RUNS = (
@@ -69,6 +72,68 @@ def read_json(root: Path, path: Path) -> dict:
     return data
 
 
+def npz_row_count(root: Path, path: Path) -> int:
+    """Read only the small integer index member, not the full logits arrays.
+
+    The collector uses len(shard['question_idx']). This restricted NPY reader
+    keeps cleanup independent of the remote training/NumPy environment.
+    """
+    required_file(root, path)
+    try:
+        with zipfile.ZipFile(path) as archive:
+            if archive.namelist().count("question_idx.npy") != 1:
+                raise ValueError("expected exactly one question_idx.npy")
+            if archive.getinfo("question_idx.npy").file_size > 1024**2:
+                raise ValueError("unexpectedly large question index")
+            raw = archive.read("question_idx.npy")
+        if len(raw) < 10 or raw[:6] != b"\x93NUMPY":
+            raise ValueError("invalid NPY magic")
+        version = tuple(raw[6:8])
+        if version == (1, 0):
+            fmt, encoding = "<H", "latin1"
+        elif version in ((2, 0), (3, 0)):
+            fmt, encoding = "<I", "utf8" if version == (3, 0) else "latin1"
+        else:
+            raise ValueError(f"unsupported NPY version: {version}")
+        start = 8 + struct.calcsize(fmt)
+        header_length = struct.unpack_from(fmt, raw, 8)[0]
+        end = start + header_length
+        if header_length > 10000 or end > len(raw):
+            raise ValueError("invalid NPY header length")
+        header = ast.literal_eval(raw[start:end].decode(encoding).strip())
+        if not isinstance(header, dict) or set(header) != {"shape", "descr", "fortran_order"}:
+            raise ValueError("invalid NPY header fields")
+        shape, dtype = header["shape"], header["descr"]
+        if (not isinstance(shape, tuple) or len(shape) != 1
+                or type(shape[0]) is not int or shape[0] <= 0
+                or type(header["fortran_order"]) is not bool
+                or dtype not in ("<i4", ">i4", "=i4", "<i8", ">i8", "=i8")):
+            raise ValueError("expected a nonempty 1-D integer question index")
+        if end + shape[0] * int(dtype[-1]) != len(raw):
+            raise ValueError("truncated/oversized NPY question index")
+        return shape[0]
+    except (ValueError, KeyError, SyntaxError, struct.error, zipfile.BadZipFile,
+            NotImplementedError, RuntimeError) as exc:
+        raise UnsafeCleanup(f"invalid logits shard index: {path}: {exc}") from exc
+
+
+def checked_shards(root: Path, directory: Path, expected_rows: int, world_size: int) -> list[Path]:
+    if type(expected_rows) is not int or expected_rows <= 0:
+        raise UnsafeCleanup(f"missing/invalid expected sample count: {directory}")
+    checked_path(root, directory)
+    shards = sorted(directory.glob("rank_*.npz"))
+    valid_names = {f"rank_{rank:04d}.npz" for rank in range(world_size)}
+    if any(path.name not in valid_names for path in shards):
+        raise UnsafeCleanup(f"unexpected logits rank name: {directory}")
+    actual_rows = sum(npz_row_count(root, path) for path in shards)
+    if actual_rows != expected_rows:
+        raise UnsafeCleanup(
+            f"logits sample rows mismatch: {directory}: "
+            f"found {actual_rows}, expected {expected_rows} across {len(shards)} shards"
+        )
+    return shards
+
+
 def completion_evidence(root: Path, relative: str) -> dict:
     if relative not in ALLOWED_RUNS:
         raise UnsafeCleanup("run is not in the reviewed allowlist")
@@ -83,6 +148,9 @@ def completion_evidence(root: Path, relative: str) -> dict:
     capture = manifest.get("protocol", {}).get("capture", {})
     if not probe or schedule.get("total_steps") != 420 or capture.get("capture_freq") != 5:
         raise UnsafeCleanup("expected the reviewed 420-step, eval5 protocol")
+    audit_freq = capture.get("audit_freq")
+    if type(audit_freq) is not int or audit_freq <= 0:
+        raise UnsafeCleanup("missing/invalid audit frequency")
     try:
         world_size = int(launch.get("n_gpus_per_node", 0)) * int(launch.get("nnodes", 0))
     except (TypeError, ValueError) as exc:
@@ -99,21 +167,26 @@ def completion_evidence(root: Path, relative: str) -> dict:
     retained = []
     for step in EXPECTED_STEPS:
         tag = f"step_{step:04d}"
+        capture_marker = {}
         for group in ("capture", "generation"):
             marker = read_json(root, run / f"state/{group}/{tag}.complete")
             if marker.get("probe_id") != probe or marker.get("step") != step:
                 raise UnsafeCleanup(f"invalid {group} marker for {tag}")
+            if group == "capture":
+                capture_marker = marker
+        audit = step % audit_freq == 0
+        if capture_marker.get("audit") is not audit:
+            raise UnsafeCleanup(f"audit marker does not match protocol: {tag}")
         for name in (f"generation/{tag}.jsonl", f"evaluation/{tag}.json",
                      f"token_stats/{tag}.parquet"):
             retained.append(required_file(root, run / name))
-        for name in ("topk_probe", "raw_logits_audit"):
-            if name == "raw_logits_audit" and step % 20:
+        for name, count_key in (("topk_probe", "topk_rows"), ("raw_logits_audit", "audit_rows")):
+            if name == "raw_logits_audit" and not audit:
+                if capture_marker.get(count_key) != 0:
+                    raise UnsafeCleanup(f"unexpected audit rows on non-audit step: {tag}")
                 continue
-            directory = checked_path(root, run / name / tag)
-            shards = sorted(directory.glob("rank_*.npz"))
-            if [p.name for p in shards] != [f"rank_{rank:04d}.npz" for rank in range(world_size)]:
-                raise UnsafeCleanup(f"missing/unexpected saved logits shards: {directory}")
-            retained.extend(required_file(root, path) for path in shards)
+            retained.extend(checked_shards(root, run / name / tag,
+                                           capture_marker.get(count_key), world_size))
     for name in ("audit_token_summary.parquet", "topk_ratio_stats.parquet"):
         retained.append(required_file(root, experiment / "aggregate" / name))
     retained_metadata = {

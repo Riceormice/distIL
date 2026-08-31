@@ -31,9 +31,15 @@ python3 scripts/maintenance/cleanup_verified_physics_weights.py \
 Report directories must be new and outside the experimental data root. Before
 deleting, the script checks 420-step/eval5 completion metadata, matching probe
 IDs, all 85 capture/generation markers, saved generation/evaluation/token-stat
-files, all rank-level top-K and audit shard paths, and the aggregate files.
-It checks presence and nonempty sizes, not the numeric validity of NPZ/Parquet
-contents. Preserve the prior collector validation results.
+files, top-K and audit sample totals, and the aggregate files. The capture code
+writes an NPZ only on ranks with selected rows; fewer shards than GPUs is valid.
+Cleanup reads each shard's small `question_idx.npy` member and sums its row count,
+matching the collector's `topk_rows` / `audit_rows` completion metadata. Missing
+sample rows, corrupt indices, and out-of-range rank names remain errors.
+The restricted integer NPY reader uses only the standard library and does not
+load full logits into memory. This checks saved indices and nonempty evidence
+files, not the numeric validity of logits/Parquet contents. Preserve the prior
+collector validation results.
 
 It rejects symlinks, nested mounts, recent weight writes, and protected analysis
 directory names inside the weight tree. A second inventory check detects changes
