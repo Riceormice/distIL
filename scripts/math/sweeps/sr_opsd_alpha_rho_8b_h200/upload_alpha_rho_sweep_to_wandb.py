@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Incrementally upload the five Qwen3-8B SR-OPSD alpha/rho runs to W&B."""
+"""Incrementally upload a five-run Qwen3 SR-OPSD alpha/rho sweep to W&B."""
 
 from __future__ import annotations
 
@@ -40,6 +40,8 @@ class SweepSpec:
     rho: str
     variant: str = "original"
     display_suffix: str = ""
+    model_size: str = "8B"
+    hardware: str = "H200"
 
     @property
     def method_dir(self) -> str:
@@ -48,10 +50,10 @@ class SweepSpec:
     @property
     def run_name(self) -> str:
         return (
-            "sr-opsd-8b-seed0-native-verl-forward-renyi-"
+            f"sr-opsd-{self.model_size.lower()}-seed0-native-verl-forward-renyi-"
             f"rho{self.rho}-refw{self.alpha}-sync0-ema0.05-lr5e-6-"
             "trainbs8-mbs8-rolloutn8-topk100-tailFalse-clip0.05-"
-            "temp0.7-tok16384-steps100-sched420-eval5-n16-h200"
+            f"temp0.7-tok16384-steps100-sched420-eval5-n16-{self.hardware.lower()}"
         )
 
     @property
@@ -60,14 +62,17 @@ class SweepSpec:
 
     @property
     def profile(self) -> str:
-        base = f"8b-sr-opsd-alpha{self.alpha}-rho{self.rho}-h200"
+        base = (
+            f"{self.model_size.lower()}-sr-opsd-alpha{self.alpha}-rho{self.rho}-"
+            f"{self.hardware.lower()}"
+        )
         return base if self.variant == "original" else f"{base}-{self.variant}"
 
     @property
     def display_name(self) -> str:
         base = (
-            "Qwen3-8B-Math-SR-OPSD-"
-            f"alpha{self.alpha}-rho{self.rho}-seed0-eval5-N16-H200"
+            f"Qwen3-{self.model_size}-Math-SR-OPSD-"
+            f"alpha{self.alpha}-rho{self.rho}-seed0-eval5-N16-{self.hardware}"
         )
         return base if not self.display_suffix else f"{base}-{self.display_suffix}"
 
@@ -75,6 +80,8 @@ class SweepSpec:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument("--model-size", choices=("4B", "8B"), default="8B")
+    parser.add_argument("--hardware", choices=("A800", "H200"), default="H200")
     parser.add_argument(
         "--entity", default="wenxuan-yuan-imperial-college-london"
     )
@@ -112,10 +119,10 @@ def config_for(
     parameters: dict[str, Any],
 ) -> dict[str, Any]:
     config: dict[str, Any] = {
-        "model": "Qwen3-8B",
+        "model": f"Qwen3-{spec.model_size}",
         "method": "SR-OPSD",
         "benchmark": "Math",
-        "hardware": "8xH200",
+        "hardware": f"8x{spec.hardware}",
         "seed": 0,
         "self_reference_alpha": float(spec.alpha),
         "self_reference_weight": float(spec.alpha),
@@ -265,13 +272,13 @@ def upload_spec(
     import wandb
 
     parameters = common.parse_parameters(run_root / "state/parameters.env")
-    group = "Qwen3-8B-Math-SR-OPSD-alpha-rho-N16-seed0"
+    group = f"Qwen3-{spec.model_size}-Math-SR-OPSD-alpha-rho-N16-seed0"
     tags = [
         "math",
         "alpha-rho-sweep",
         "SR-OPSD",
-        "Qwen3-8B",
-        "H200",
+        f"Qwen3-{spec.model_size}",
+        spec.hardware,
         "eval5",
         "N16",
         "seed0",
@@ -363,6 +370,8 @@ def main() -> None:
             rho,
             variant=args.variant,
             display_suffix=args.display_suffix,
+            model_size=args.model_size,
+            hardware=args.hardware,
         )
         try:
             pending, _ = upload_spec(

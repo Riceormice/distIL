@@ -14,6 +14,8 @@ SWEEP_OUTPUT_ROOT="${SWEEP_OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/sr_opsd_mat
 SWEEP_STATE_ROOT="${SWEEP_STATE_ROOT:-${SWEEP_OUTPUT_ROOT}/wandb_upload_state_sdpo_math_test}"
 LEGACY_SWEEP_OUTPUT_ROOT="${LEGACY_SWEEP_OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/sr_opsd_math_alpha_rho_sweep_legacy_allprompts_20260825}"
 LEGACY_SWEEP_STATE_ROOT="${LEGACY_SWEEP_STATE_ROOT:-${STATE_ROOT}/alpha_rho_legacy_allprompts}"
+SWEEP_4B_OUTPUT_ROOT="${SWEEP_4B_OUTPUT_ROOT:-/media/vlm-ckp-fileset/ylong/sr_opsd_math_4b_alpha_rho_sweep_eval5_n16_a800_20260829}"
+SWEEP_4B_STATE_ROOT="${SWEEP_4B_STATE_ROOT:-${STATE_ROOT}/alpha_rho_4b_a800}"
 WANDB_ENV_FILE="${WANDB_ENV_FILE:-/root/.config/wandb/upload.env}"
 PID_FILE="${STATE_ROOT}/periodic_upload.pid"
 LOCK_FILE="${STATE_ROOT}/periodic_upload.lock"
@@ -25,7 +27,8 @@ mkdir -p \
   "${STATE_ROOT}" \
   "${MAIN_STATE_ROOT}" \
   "${SWEEP_STATE_ROOT}" \
-  "${LEGACY_SWEEP_STATE_ROOT}"
+  "${LEGACY_SWEEP_STATE_ROOT}" \
+  "${SWEEP_4B_STATE_ROOT}"
 
 run_main() {
   env \
@@ -53,6 +56,20 @@ run_legacy_sweep() {
     WANDB_PROJECT="${PROJECT}" \
     bash "${SWEEP_UPLOADER}" \
       --state-dir "${LEGACY_SWEEP_STATE_ROOT}" \
+      --variant legacy_allprompts \
+      --display-suffix LegacyAllPrompts \
+      "$@"
+}
+
+run_4b_sweep() {
+  env \
+    OUTPUT_ROOT="${SWEEP_4B_OUTPUT_ROOT}" \
+    WANDB_ENV_FILE="${WANDB_ENV_FILE}" \
+    WANDB_ENTITY="${ENTITY}" \
+    WANDB_PROJECT="${PROJECT}" \
+    bash "${SWEEP_UPLOADER}" \
+      --state-dir "${SWEEP_4B_STATE_ROOT}" \
+      --model-size 4B --hardware A800 \
       --variant legacy_allprompts \
       --display-suffix LegacyAllPrompts \
       "$@"
@@ -116,7 +133,10 @@ show_progress() {
   echo "===== LEGACY ALL-PROMPTS ALPHA/RHO SWEEP (5 runs) ====="
   run_legacy_sweep --dry-run || failures=$((failures + 1))
   echo
-  echo "managed_runs=23 destination=https://wandb.ai/${ENTITY}/${PROJECT} failures=${failures}"
+  echo "===== 4B A800 SR-OPSD ALPHA/RHO SWEEP (5 runs) ====="
+  run_4b_sweep --dry-run || failures=$((failures + 1))
+  echo
+  echo "managed_runs=28 destination=https://wandb.ai/${ENTITY}/${PROJECT} failures=${failures}"
   (( failures == 0 ))
 }
 
@@ -131,7 +151,10 @@ upload_once() {
   echo "===== UPLOAD LEGACY ALL-PROMPTS ALPHA/RHO RUNS ====="
   run_legacy_sweep || failures=$((failures + 1))
   echo
-  echo "upload_groups=3 managed_runs=23 failures=${failures}"
+  echo "===== UPLOAD 4B A800 ALPHA/RHO RUNS ====="
+  run_4b_sweep || failures=$((failures + 1))
+  echo
+  echo "upload_groups=4 managed_runs=28 failures=${failures}"
   (( failures == 0 ))
 }
 
@@ -156,6 +179,8 @@ watch_forever() {
           SWEEP_STATE_ROOT="${SWEEP_STATE_ROOT}" \
           LEGACY_SWEEP_OUTPUT_ROOT="${LEGACY_SWEEP_OUTPUT_ROOT}" \
           LEGACY_SWEEP_STATE_ROOT="${LEGACY_SWEEP_STATE_ROOT}" \
+          SWEEP_4B_OUTPUT_ROOT="${SWEEP_4B_OUTPUT_ROOT}" \
+          SWEEP_4B_STATE_ROOT="${SWEEP_4B_STATE_ROOT}" \
           WANDB_ENV_FILE="${WANDB_ENV_FILE}" \
           WANDB_ENTITY="${ENTITY}" \
           WANDB_PROJECT="${PROJECT}" \
@@ -194,6 +219,8 @@ case "${1:-status}" in
       SWEEP_STATE_ROOT="${SWEEP_STATE_ROOT}" \
       LEGACY_SWEEP_OUTPUT_ROOT="${LEGACY_SWEEP_OUTPUT_ROOT}" \
       LEGACY_SWEEP_STATE_ROOT="${LEGACY_SWEEP_STATE_ROOT}" \
+      SWEEP_4B_OUTPUT_ROOT="${SWEEP_4B_OUTPUT_ROOT}" \
+      SWEEP_4B_STATE_ROOT="${SWEEP_4B_STATE_ROOT}" \
       WANDB_ENV_FILE="${WANDB_ENV_FILE}" \
       WANDB_ENTITY="${ENTITY}" \
       WANDB_PROJECT="${PROJECT}" \
@@ -249,10 +276,12 @@ case "${1:-status}" in
     tail -n 100 "${LOG_FILE}" 2>/dev/null || true
     ;;
   doctor)
-    echo "managed_runs=23"
+    echo "managed_runs=28"
     echo "main_state=${MAIN_STATE_ROOT}"
     echo "sweep_state=${SWEEP_STATE_ROOT}"
     echo "legacy_sweep_state=${LEGACY_SWEEP_STATE_ROOT}"
+    echo "sweep_4b_source=${SWEEP_4B_OUTPUT_ROOT}"
+    echo "sweep_4b_state=${SWEEP_4B_STATE_ROOT}"
     echo "destination=https://wandb.ai/${ENTITY}/${PROJECT}"
     run_main doctor
     ;;

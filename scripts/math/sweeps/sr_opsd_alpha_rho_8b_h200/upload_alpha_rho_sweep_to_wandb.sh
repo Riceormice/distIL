@@ -8,14 +8,17 @@ PROJECT="${WANDB_PROJECT:-SDPO_math_test}"
 WANDB_ENV_FILE="${WANDB_ENV_FILE:-/root/.config/wandb/upload.env}"
 
 if [[ -z "${WANDB_API_KEY:-}" && -r "${WANDB_ENV_FILE}" ]]; then
+  set -a
   # shellcheck disable=SC1090
   source "${WANDB_ENV_FILE}"
+  set +a
 fi
 if [[ -z "${WANDB_API_KEY:-}" ]]; then
   echo "ERROR: WANDB_API_KEY is not configured." >&2
   echo "Run scripts/wandb/configure_wandb_key.sh interactively first." >&2
   exit 2
 fi
+export WANDB_API_KEY
 
 if [[ -z "${WANDB_PYTHON_BIN:-}" ]]; then
   for candidate in \

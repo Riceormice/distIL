@@ -16,9 +16,9 @@ resolve_python() {
   candidate_is_compatible() {
     local python_bin="$1"
     [[ -x "${python_bin}" ]] || return 1
-    "${python_bin}" - "${WANDB_API_KEY:-}" <<'PY' >/dev/null 2>&1
+    "${python_bin}" - <<'PY' >/dev/null 2>&1
+import os
 import re
-import sys
 from importlib.metadata import version
 
 import wandb  # noqa: F401
@@ -27,7 +27,7 @@ match = re.match(r"^(\d+)\.(\d+)", version("wandb"))
 if match is None:
     raise SystemExit(1)
 installed = tuple(map(int, match.groups()))
-key = sys.argv[1]
+key = os.environ.get("WANDB_API_KEY", "")
 if key.startswith("wandb_v1_") and installed < (0, 22):
     raise SystemExit(1)
 PY
