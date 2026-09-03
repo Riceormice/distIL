@@ -46,6 +46,16 @@ UPLOAD_INTERVAL_SECONDS=600 bash "$MANAGER" restart
 bash "$MANAGER" status
 ```
 
+To upload only the five Qwen3-4B A800 alpha/rho runs, use the dedicated
+incremental wrapper. Re-running the command uploads only new training steps or
+newly completed evaluation files and resumes the same five W&B run IDs:
+
+```bash
+UPLOADER="$REPO/scripts/math/sweeps/sr_opsd_alpha_rho_4b_a800/upload_alpha_rho_4b_sweep_to_wandb.sh"
+bash "$UPLOADER" --dry-run
+bash "$UPLOADER"
+```
+
 Use only one uploader against a given state directory at a time. Do not run
 `once` concurrently with the watcher or launch another watcher on a different
 development server. API credentials are read from `WANDB_API_KEY` or
